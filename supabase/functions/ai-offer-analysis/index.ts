@@ -245,10 +245,24 @@ Return ONLY a valid JSON object with this exact structure:
     }));
 
     // Generate comprehensive comparison analysis
-    const supplierNames = validatedQuotations.map(q => q.supplier.name);
+    // Sanitize supplier names to prevent JSON parsing issues
+    const supplierNames = validatedQuotations.map(q => 
+      q.supplier.name
+        .replace(/"/g, "'")
+        .replace(/\\/g, '')
+        .replace(/[\n\r\t]/g, ' ')
+        .trim()
+        .substring(0, 50)
+    );
     const numSuppliers = supplierNames.length;
     
+    // Create supplier index mapping for cleaner JSON template
+    const supplierIndexMap = supplierNames.map((name, idx) => `Supplier${idx + 1}`);
+    
     const comparisonPrompt = `You are an expert procurement analyst. Generate a COMPREHENSIVE global-standard comparative analysis for these ${numSuppliers} supplier quotation(s).
+
+SUPPLIER MAPPING:
+${supplierNames.map((name, idx) => `Supplier${idx + 1} = "${name}"`).join('\n')}
 
 QUOTATION DATA:
 ${JSON.stringify(validatedQuotations, null, 2)}
@@ -288,31 +302,34 @@ ANALYSIS REQUIREMENTS:
    - Negotiation points
    - Action items
 
+IMPORTANT: Use supplier indices (Supplier1, Supplier2, etc.) as keys to avoid JSON parsing issues.
+
 Return this EXACT JSON structure:
 {
   "technicalComparison": [
-    { "criteria": "Brand Quality", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "details", "score": 0 }`).join(', ')} } },
-    { "criteria": "Specifications Match", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "details", "score": 0 }`).join(', ')} } },
-    { "criteria": "Warranty Terms", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "details", "score": 0 }`).join(', ')} } },
-    { "criteria": "Certifications", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "details", "score": 0 }`).join(', ')} } },
-    { "criteria": "Country of Origin", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "details", "score": 0 }`).join(', ')} } },
-    { "criteria": "Technical Deviations", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "details", "score": 0 }`).join(', ')} } }
+    { "criteria": "Brand Quality", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "details", "score": 0 }`).join(', ')} } },
+    { "criteria": "Specifications Match", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "details", "score": 0 }`).join(', ')} } },
+    { "criteria": "Warranty Terms", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "details", "score": 0 }`).join(', ')} } },
+    { "criteria": "Certifications", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "details", "score": 0 }`).join(', ')} } },
+    { "criteria": "Country of Origin", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "details", "score": 0 }`).join(', ')} } },
+    { "criteria": "Technical Deviations", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "details", "score": 0 }`).join(', ')} } }
   ],
   "commercialComparison": [
-    { "criteria": "Total Price", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "amount with currency", "isLowest": false }`).join(', ')} } },
-    { "criteria": "Payment Terms", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "terms" }`).join(', ')} } },
-    { "criteria": "Delivery Days", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "X days", "isFastest": false }`).join(', ')} } },
-    { "criteria": "Delivery Terms", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "incoterms" }`).join(', ')} } },
-    { "criteria": "Validity Period", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "X days" }`).join(', ')} } },
-    { "criteria": "Tax/VAT", "suppliers": { ${supplierNames.map(n => `"${n}": { "value": "amount" }`).join(', ')} } }
+    { "criteria": "Total Price", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "amount with currency", "isLowest": false }`).join(', ')} } },
+    { "criteria": "Payment Terms", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "terms" }`).join(', ')} } },
+    { "criteria": "Delivery Days", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "X days", "isFastest": false }`).join(', ')} } },
+    { "criteria": "Delivery Terms", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "incoterms" }`).join(', ')} } },
+    { "criteria": "Validity Period", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "X days" }`).join(', ')} } },
+    { "criteria": "Tax/VAT", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "amount" }`).join(', ')} } }
   ],
   "itemComparison": [
-    { "item": "item description", "suppliers": { ${supplierNames.map(n => `"${n}": { "unitPrice": 0, "quantity": 0, "total": 0 }`).join(', ')}, "lowestSupplier": "name" }
+    { "item": "item description", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "unitPrice": 0, "quantity": 0, "total": 0 }`).join(', ')} }, "lowestSupplier": "Supplier1" }
   ],
   "ranking": [
     { 
       "rank": 1,
-      "supplierName": "name", 
+      "supplierIndex": "Supplier1",
+      "supplierName": "actual name", 
       "technicalScore": 0, 
       "commercialScore": 0, 
       "overallScore": 0, 
@@ -323,15 +340,16 @@ Return this EXACT JSON structure:
     }
   ],
   "summary": {
-    "lowestEvaluated": "supplier with lowest total price",
-    "bestValue": "supplier with best value (price + quality)",
-    "technicalLeader": "supplier with highest technical score",
-    "fastestDelivery": "supplier with quickest delivery",
+    "lowestEvaluated": "supplier name with lowest total price",
+    "bestValue": "supplier name with best value (price + quality)",
+    "technicalLeader": "supplier name with highest technical score",
+    "fastestDelivery": "supplier name with quickest delivery",
     "recommendation": "Detailed recommendation paragraph explaining why this supplier should be selected...",
     "savingsPotential": "If negotiating with X supplier, potential savings of Y%",
     "notes": ["Important note 1", "Important note 2", "Risk consideration"],
     "actionItems": ["Action 1", "Action 2"]
-  }
+  },
+  "supplierMapping": { ${supplierIndexMap.map((s, idx) => `"${s}": "${supplierNames[idx].replace(/"/g, "'")}"`).join(', ')} }
 }
 
 Provide accurate scores, identify the best options clearly, and give actionable recommendations.`;
@@ -346,14 +364,15 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       },
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',
+        max_completion_tokens: 8000,
         messages: [
-          { role: 'system', content: 'You are a senior procurement analyst providing comprehensive quotation analysis following international procurement standards. Be thorough, accurate, and provide actionable insights.' },
+          { role: 'system', content: 'You are a senior procurement analyst providing comprehensive quotation analysis following international procurement standards. Return ONLY valid JSON without any markdown formatting or code blocks. Be thorough but concise.' },
           { role: 'user', content: comparisonPrompt }
         ],
       }),
     });
 
-    let analysis;
+    let analysis: any;
 
     if (!analysisResponse.ok) {
       const errorText = await analysisResponse.text();
@@ -364,16 +383,67 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       const analysisContent = analysisData.choices?.[0]?.message?.content || '';
 
       try {
-        const jsonMatch = analysisContent.match(/\{[\s\S]*\}/);
+        // Try to extract and clean JSON from response
+        let jsonMatch = analysisContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          analysis = JSON.parse(jsonMatch[0]);
+          let jsonString = jsonMatch[0];
+          
+          // Clean common JSON issues
+          jsonString = jsonString
+            .replace(/,\s*}/g, '}')  // Remove trailing commas before }
+            .replace(/,\s*]/g, ']')  // Remove trailing commas before ]
+            .replace(/[\x00-\x1F\x7F]/g, ' '); // Remove control characters
+          
+          analysis = JSON.parse(jsonString);
+          
+          // Map supplier indices back to actual names in the analysis
+          if (analysis.supplierMapping) {
+            // Replace SupplierX keys with actual names in technicalComparison
+            if (analysis.technicalComparison) {
+              analysis.technicalComparison = analysis.technicalComparison.map((item: any) => {
+                const newSuppliers: any = {};
+                Object.entries(item.suppliers || {}).forEach(([key, value]) => {
+                  const actualName = analysis.supplierMapping[key] || key;
+                  newSuppliers[actualName] = value;
+                });
+                return { ...item, suppliers: newSuppliers };
+              });
+            }
+            
+            // Replace in commercialComparison
+            if (analysis.commercialComparison) {
+              analysis.commercialComparison = analysis.commercialComparison.map((item: any) => {
+                const newSuppliers: any = {};
+                Object.entries(item.suppliers || {}).forEach(([key, value]) => {
+                  const actualName = analysis.supplierMapping[key] || key;
+                  newSuppliers[actualName] = value;
+                });
+                return { ...item, suppliers: newSuppliers };
+              });
+            }
+            
+            // Replace in itemComparison
+            if (analysis.itemComparison) {
+              analysis.itemComparison = analysis.itemComparison.map((item: any) => {
+                const newSuppliers: any = {};
+                Object.entries(item.suppliers || {}).forEach(([key, value]) => {
+                  const actualName = analysis.supplierMapping[key] || key;
+                  newSuppliers[actualName] = value;
+                });
+                return { ...item, suppliers: newSuppliers };
+              });
+            }
+          }
+          
           console.log('Analysis parsed successfully');
         } else {
           console.error('No JSON found in analysis response');
+          console.error('Response preview:', analysisContent.substring(0, 500));
           analysis = createDefaultAnalysis(validatedQuotations);
         }
       } catch (e) {
         console.error('Failed to parse analysis:', e);
+        console.error('Response preview:', analysisContent.substring(0, 500));
         analysis = createDefaultAnalysis(validatedQuotations);
       }
     }
