@@ -32,8 +32,9 @@ interface UploadedFile {
 }
 
 interface AnalysisResult {
-  technicalComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; score: number }> }>;
-  commercialComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; isLowest?: boolean }> }>;
+  technicalComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; score?: number }> }>;
+  commercialComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; isLowest?: boolean; isFastest?: boolean }> }>;
+  itemComparison?: Array<{ item: string; suppliers: Record<string, { unitPrice?: number; total?: number; quantity?: number }>; lowestSupplier?: string }>;
   ranking: Array<{ supplierName: string; technicalScore: number; commercialScore: number; overallScore: number; recommendation: string; risks: string[] }>;
   summary: { lowestEvaluated: string; bestValue: string; recommendation: string; notes: string[] };
 }
@@ -198,16 +199,20 @@ export default function OfferAnalysisPage() {
       title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
       description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
     });
+    
+    // Navigate to analyzer home after saving
+    setTimeout(() => navigate('/analyzer'), 1000);
   };
 
   const downloadPDF = () => {
     if (!analysisResult) return;
     
-    const doc = new jsPDF('p', 'mm', 'a4');
+    // Use landscape A4 for better table display
+    const doc = new jsPDF('l', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
-    let yPos = 20;
+    let yPos = 15;
     
     // Get supplier names
     const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
@@ -216,186 +221,332 @@ export default function OfferAnalysisPage() {
     const checkNewPage = (requiredSpace: number) => {
       if (yPos + requiredSpace > pageHeight - 20) {
         doc.addPage();
-        yPos = 20;
+        yPos = 15;
         return true;
       }
       return false;
     };
     
-    // Company Header
-    doc.setFontSize(18);
+    // Generate report reference
+    const reportRef = `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    const currentDate = new Date();
+    const dateStr = currentDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timeStr = currentDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    
+    // ===== HEADER SECTION =====
+    // Company Name (left)
+    doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(settings.company_name_en || 'Company', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 8;
+    doc.text(settings.company_name_en || 'Company Name', margin, yPos);
     
-    if (settings.address_en) {
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text(settings.address_en, pageWidth / 2, yPos, { align: 'center' });
-      yPos += 6;
-    }
-    
-    // Line separator
-    doc.setDrawColor(100, 100, 100);
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 10;
-    
-    // Report Title
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Quotation Comparative Analysis', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 6;
-    
-    // Date
+    // Date/Time (right)
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(100, 100, 100);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth / 2, yPos, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
-    yPos += 12;
+    doc.text(`Date: ${dateStr}`, pageWidth - margin, yPos, { align: 'right' });
+    yPos += 5;
+    doc.text(`Time: ${timeStr}`, pageWidth - margin, yPos, { align: 'right' });
     
-    // Commercial Comparison Section
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Commercial Comparison', margin, yPos);
+    // Company Address
+    if (settings.address_en) {
+      doc.setFontSize(9);
+      doc.text(settings.address_en, margin, yPos);
+    }
     yPos += 8;
     
-    // Draw Commercial Table
-    const colWidth = (pageWidth - margin * 2) / (suppliers.length + 1);
+    // Line separator
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 8;
+    
+    // Report Reference
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Report Reference: ${reportRef}`, margin, yPos);
+    yPos += 10;
+    
+    // ===== TITLE =====
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('QUOTATION COMPARATIVE STATEMENT', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 12;
+    
+    // ===== 1. EXECUTIVE SUMMARY =====
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. Executive Summary', margin, yPos);
+    yPos += 6;
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    const summaryText = analysisResult.summary?.recommendation || 'No summary available.';
+    const summaryLines = doc.splitTextToSize(summaryText, pageWidth - margin * 2);
+    doc.text(summaryLines.slice(0, 4), margin, yPos);
+    yPos += Math.min(summaryLines.length, 4) * 4 + 8;
+    
+    // ===== 2. COMMERCIAL AND TECHNICAL TERMS =====
+    checkNewPage(60);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('2. Commercial and Technical Terms', margin, yPos);
+    yPos += 8;
+    
+    // Calculate column widths
+    const paramColWidth = 50;
+    const vendorColWidth = (pageWidth - margin * 2 - paramColWidth) / suppliers.length;
     const rowHeight = 8;
     
     // Table Header
-    doc.setFillColor(240, 240, 240);
+    doc.setFillColor(230, 230, 230);
     doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    doc.text('Criteria', margin + 2, yPos);
+    doc.text('Parameter', margin + 2, yPos);
     suppliers.forEach((supplier, i) => {
-      const xPos = margin + colWidth + (i * colWidth);
-      doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: colWidth - 4 });
+      const xPos = margin + paramColWidth + (i * vendorColWidth);
+      doc.text(supplier.substring(0, 20), xPos + 2, yPos, { maxWidth: vendorColWidth - 4 });
     });
     yPos += rowHeight;
     
-    // Table Rows
+    // Draw border under header
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.3);
+    doc.line(margin, yPos - 3, pageWidth - margin, yPos - 3);
+    
+    // Combined Commercial + Technical rows
+    const allTerms = [
+      ...analysisResult.commercialComparison.map(row => ({ ...row, type: 'commercial' })),
+      ...analysisResult.technicalComparison.slice(0, 4).map(row => ({ ...row, type: 'technical' }))
+    ];
+    
     doc.setFont('helvetica', 'normal');
-    analysisResult.commercialComparison.forEach((row) => {
+    allTerms.forEach((row, idx) => {
       checkNewPage(rowHeight + 5);
       
       // Alternate row background
+      if (idx % 2 === 0) {
+        doc.setFillColor(248, 248, 248);
+        doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+      }
+      
       doc.setFontSize(8);
-      doc.text(row.criteria, margin + 2, yPos, { maxWidth: colWidth - 4 });
+      doc.text(row.criteria, margin + 2, yPos, { maxWidth: paramColWidth - 4 });
       
       suppliers.forEach((supplier, i) => {
         const val = row.suppliers[supplier];
-        const xPos = margin + colWidth + (i * colWidth);
+        const xPos = margin + paramColWidth + (i * vendorColWidth);
         
-        if (val?.isLowest) {
-          doc.setFillColor(200, 246, 213);
-          doc.rect(xPos, yPos - 5, colWidth, rowHeight, 'F');
+        // Highlight lowest price
+        if ((val as any)?.isLowest) {
+          doc.setFillColor(198, 246, 213);
+          doc.rect(xPos, yPos - 5, vendorColWidth, rowHeight, 'F');
           doc.setFont('helvetica', 'bold');
         }
         
-        doc.text(val?.value || 'N/A', xPos + 2, yPos, { maxWidth: colWidth - 4 });
+        const displayVal = val?.value || ((val as any)?.score ? `${(val as any).score}/100` : 'N/A');
+        doc.text(String(displayVal).substring(0, 25), xPos + 2, yPos, { maxWidth: vendorColWidth - 4 });
         doc.setFont('helvetica', 'normal');
       });
       
       yPos += rowHeight;
     });
     
-    yPos += 10;
-    checkNewPage(50);
+    // Table border
+    doc.setDrawColor(150, 150, 150);
+    doc.setLineWidth(0.1);
+    doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
+    yPos += 12;
     
-    // Technical Comparison Section
-    doc.setFontSize(12);
+    // ===== 3. ITEM-WISE PRICE COMPARISON =====
+    if (analysisResult.itemComparison && analysisResult.itemComparison.length > 0) {
+      checkNewPage(50);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('3. Item-wise Price Comparison', margin, yPos);
+      yPos += 8;
+      
+      // Item table header
+      const itemColWidth = 60;
+      const priceColWidth = (pageWidth - margin * 2 - itemColWidth) / suppliers.length;
+      
+      doc.setFillColor(230, 230, 230);
+      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Item Description', margin + 2, yPos);
+      suppliers.forEach((supplier, i) => {
+        const xPos = margin + itemColWidth + (i * priceColWidth);
+        doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: priceColWidth - 4 });
+      });
+      yPos += rowHeight;
+      
+      doc.setFont('helvetica', 'normal');
+      analysisResult.itemComparison.slice(0, 10).forEach((item: any, idx: number) => {
+        checkNewPage(rowHeight + 5);
+        
+        if (idx % 2 === 0) {
+          doc.setFillColor(248, 248, 248);
+          doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+        }
+        
+        doc.setFontSize(8);
+        doc.text(String(item.item || '').substring(0, 30), margin + 2, yPos, { maxWidth: itemColWidth - 4 });
+        
+        suppliers.forEach((supplier, i) => {
+          const val = item.suppliers?.[supplier];
+          const xPos = margin + itemColWidth + (i * priceColWidth);
+          const isLowest = item.lowestSupplier === supplier;
+          
+          if (isLowest) {
+            doc.setFillColor(198, 246, 213);
+            doc.rect(xPos, yPos - 5, priceColWidth, rowHeight, 'F');
+            doc.setFont('helvetica', 'bold');
+          }
+          
+          const price = val?.total || val?.unitPrice || 'N/A';
+          doc.text(String(price).substring(0, 15), xPos + 2, yPos);
+          doc.setFont('helvetica', 'normal');
+        });
+        
+        yPos += rowHeight;
+      });
+      yPos += 10;
+    }
+    
+    // ===== 4. FINAL RECOMMENDATION =====
+    checkNewPage(50);
+    doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text('Technical Comparison', margin, yPos);
+    doc.text('4. Final Recommendation', margin, yPos);
     yPos += 8;
     
-    // Technical Table Header
-    doc.setFillColor(240, 240, 240);
-    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Criteria', margin + 2, yPos);
-    suppliers.forEach((supplier, i) => {
-      const xPos = margin + colWidth + (i * colWidth);
-      doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: colWidth - 4 });
-    });
-    yPos += rowHeight;
+    // Recommendation box
+    doc.setFillColor(240, 249, 255);
+    doc.setDrawColor(49, 130, 206);
+    doc.setLineWidth(0.5);
+    doc.rect(margin, yPos - 3, pageWidth - margin * 2, 35, 'FD');
     
-    // Technical Table Rows
+    doc.setFontSize(9);
+    yPos += 4;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Best Value Vendor:', margin + 5, yPos);
     doc.setFont('helvetica', 'normal');
-    analysisResult.technicalComparison.forEach((row) => {
-      checkNewPage(rowHeight + 5);
-      
-      doc.setFontSize(8);
-      doc.text(row.criteria, margin + 2, yPos, { maxWidth: colWidth - 4 });
-      
-      suppliers.forEach((supplier, i) => {
-        const val = row.suppliers[supplier];
-        const xPos = margin + colWidth + (i * colWidth);
-        const displayVal = `${val?.value || 'N/A'} ${val?.score ? `(${val.score})` : ''}`;
-        doc.text(displayVal, xPos + 2, yPos, { maxWidth: colWidth - 4 });
-      });
-      
-      yPos += rowHeight;
-    });
+    doc.text(analysisResult.summary?.bestValue || 'N/A', margin + 50, yPos);
     
-    yPos += 15;
-    checkNewPage(60);
-    
-    // AI Recommendation Section
-    doc.setFontSize(12);
+    yPos += 7;
     doc.setFont('helvetica', 'bold');
-    doc.text('AI Recommendation Summary', margin, yPos);
+    doc.text('Lowest Price Vendor:', margin + 5, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(analysisResult.summary?.lowestEvaluated || 'N/A', margin + 50, yPos);
+    
+    yPos += 7;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Justification:', margin + 5, yPos);
+    yPos += 5;
+    doc.setFont('helvetica', 'normal');
+    const justificationLines = doc.splitTextToSize(
+      analysisResult.summary?.recommendation || 'Manual review recommended.',
+      pageWidth - margin * 2 - 15
+    );
+    doc.text(justificationLines.slice(0, 2), margin + 5, yPos);
+    
+    yPos += 20;
+    
+    // ===== SIGNATURE BLOCK =====
+    checkNewPage(40);
     yPos += 10;
     
-    // Recommendation Box
-    doc.setFillColor(235, 248, 255);
-    doc.setDrawColor(49, 130, 206);
-    doc.rect(margin, yPos - 5, pageWidth - margin * 2, 45, 'FD');
+    const sigBoxWidth = (pageWidth - margin * 2 - 20) / 3;
+    const sigBoxHeight = 25;
     
-    doc.setFontSize(10);
+    doc.setFontSize(8);
+    doc.setDrawColor(150, 150, 150);
+    doc.setLineWidth(0.2);
+    
+    // Prepared By
+    doc.rect(margin, yPos, sigBoxWidth, sigBoxHeight);
     doc.setFont('helvetica', 'bold');
-    doc.text('Best Value:', margin + 5, yPos + 3);
+    doc.text('Prepared By:', margin + 3, yPos + 5);
     doc.setFont('helvetica', 'normal');
-    doc.text(analysisResult.summary.bestValue || 'N/A', margin + 35, yPos + 3);
+    doc.text('Name: _______________', margin + 3, yPos + 12);
+    doc.text('Date: _______________', margin + 3, yPos + 18);
+    doc.text('Sign: _______________', margin + 3, yPos + 23);
     
+    // Verified By
+    const verifyX = margin + sigBoxWidth + 10;
+    doc.rect(verifyX, yPos, sigBoxWidth, sigBoxHeight);
     doc.setFont('helvetica', 'bold');
-    doc.text('Lowest Price:', margin + 5, yPos + 12);
+    doc.text('Verified By:', verifyX + 3, yPos + 5);
     doc.setFont('helvetica', 'normal');
-    doc.text(analysisResult.summary.lowestEvaluated || 'N/A', margin + 35, yPos + 12);
+    doc.text('Name: _______________', verifyX + 3, yPos + 12);
+    doc.text('Date: _______________', verifyX + 3, yPos + 18);
+    doc.text('Sign: _______________', verifyX + 3, yPos + 23);
     
+    // Approved By
+    const approveX = margin + (sigBoxWidth + 10) * 2;
+    doc.rect(approveX, yPos, sigBoxWidth, sigBoxHeight);
     doc.setFont('helvetica', 'bold');
-    doc.text('Recommendation:', margin + 5, yPos + 21);
+    doc.text('Approved By:', approveX + 3, yPos + 5);
     doc.setFont('helvetica', 'normal');
-    
-    // Wrap recommendation text
-    const recommendationLines = doc.splitTextToSize(
-      analysisResult.summary.recommendation || 'N/A',
-      pageWidth - margin * 2 - 10
-    );
-    doc.text(recommendationLines.slice(0, 2), margin + 5, yPos + 30);
+    doc.text('Name: _______________', approveX + 3, yPos + 12);
+    doc.text('Date: _______________', approveX + 3, yPos + 18);
+    doc.text('Sign: _______________', approveX + 3, yPos + 23);
     
     // Save PDF directly (no print dialog)
-    doc.save(`offer-analysis-${new Date().toISOString().split('T')[0]}.pdf`);
+    doc.save(`quotation-analysis-${reportRef}-${dateStr.replace(/\//g, '-')}.pdf`);
+    
+    toast({
+      title: language === 'ar' ? 'تم التحميل' : 'PDF Downloaded',
+      description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
+    });
+    
+    // Navigate to analyzer home after download
+    setTimeout(() => navigate('/analyzer'), 1000);
   };
 
   const downloadExcel = () => {
     if (!analysisResult) return;
-    let csv = 'Quotation Comparative Analysis\n\nCommercial Comparison\n';
+    const reportRef = `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    
+    let csv = 'QUOTATION COMPARATIVE STATEMENT\n';
+    csv += `Report Reference,${reportRef}\n`;
+    csv += `Generated,${new Date().toLocaleString()}\n\n`;
+    
     const suppliers = Object.keys(analysisResult.commercialComparison[0]?.suppliers || {});
+    
+    // Commercial Comparison
+    csv += 'COMMERCIAL COMPARISON\n';
     csv += `Criteria,${suppliers.join(',')}\n`;
     analysisResult.commercialComparison.forEach(row => {
       csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'}"`).join(',')}\n`;
     });
-    csv += `\nRecommendation\nBest Value,${analysisResult.summary.bestValue}\nLowest Price,${analysisResult.summary.lowestEvaluated}\n`;
+    
+    // Technical Comparison
+    csv += '\nTECHNICAL COMPARISON\n';
+    csv += `Criteria,${suppliers.join(',')}\n`;
+    analysisResult.technicalComparison.forEach(row => {
+      csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'} (${row.suppliers[s]?.score || 0})"`).join(',')}\n`;
+    });
+    
+    // Recommendation
+    csv += '\nRECOMMENDATION\n';
+    csv += `Best Value,"${analysisResult.summary.bestValue}"\n`;
+    csv += `Lowest Price,"${analysisResult.summary.lowestEvaluated}"\n`;
+    csv += `Recommendation,"${analysisResult.summary.recommendation?.replace(/"/g, "'") || ''}"\n`;
     
     const blob = new Blob([csv], { type: 'text/csv' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `offer-analysis-${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `quotation-analysis-${reportRef}.csv`;
     link.click();
+    
+    toast({
+      title: language === 'ar' ? 'تم التحميل' : 'Excel Downloaded',
+      description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
+    });
+    
+    // Navigate to analyzer home after download
+    setTimeout(() => navigate('/analyzer'), 1000);
   };
 
   const getRecommendationBadge = (rec: string) => {
