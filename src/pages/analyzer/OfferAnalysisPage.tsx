@@ -11,7 +11,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { extractTextFromPDF, isPDF } from '@/lib/pdfTextExtractor';
 import { 
   Upload, FileText, X, Sparkles, Download, FileSpreadsheet,
   Award, AlertTriangle, CheckCircle, TrendingUp, DollarSign,
@@ -19,6 +18,9 @@ import {
 } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+
+// Max file size: 2MB per file
+const MAX_FILE_SIZE = 2 * 1024 * 1024;
 
 interface UploadedFile {
   id: string;
@@ -80,12 +82,27 @@ export default function OfferAnalysisPage() {
   }, []);
 
   const handleFiles = (files: File[]) => {
-    const newFiles: UploadedFile[] = files.map(file => ({
-      id: Math.random().toString(36).substr(2, 9),
-      file,
-      status: 'pending',
-      preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
-    }));
+    const newFiles: UploadedFile[] = [];
+    
+    for (const file of files) {
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE) {
+        toast({
+          title: 'File too large',
+          description: `"${file.name}" exceeds 2MB limit. Please use a smaller file.`,
+          variant: 'destructive',
+        });
+        continue;
+      }
+      
+      newFiles.push({
+        id: Math.random().toString(36).substr(2, 9),
+        file,
+        status: 'pending',
+        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      });
+    }
+    
     setUploadedFiles(prev => [...prev, ...newFiles]);
   };
 
@@ -108,31 +125,17 @@ export default function OfferAnalysisPage() {
     setProgressMessage('Preparing files...');
 
     try {
-      // Process files - extract PDF text client-side to reduce payload
-      setProgressMessage('Extracting document content...');
+      // Process files - convert to base64
+      setProgressMessage('Processing documents...');
       const filesData = await Promise.all(uploadedFiles.map(async (uf, index) => {
         setProgressMessage(`Processing file ${index + 1}/${uploadedFiles.length}: ${uf.file.name}`);
         setUploadedFiles(prev => prev.map((f, i) => 
           i === index ? { ...f, status: 'processing' } : f
         ));
 
-        if (isPDF(uf.file)) {
-          // Extract text from PDF client-side (much smaller payload)
-          try {
-            const text = await extractTextFromPDF(uf.file);
-            return { name: uf.file.name, type: uf.file.type, text };
-          } catch (err) {
-            console.error('PDF extraction failed, falling back to base64:', err);
-            // Fallback to base64 if text extraction fails
-            return { name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file) };
-          }
-        } else if (uf.file.type.startsWith('image/')) {
-          // Images still need base64 for vision API
-          return { name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file) };
-        } else {
-          // Other files - try to read as text or base64
-          return { name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file) };
-        }
+        // Convert all files to base64
+        const base64 = await fileToBase64(uf.file);
+        return { name: uf.file.name, type: uf.file.type, data: base64 };
       }));
       
       setAnalysisProgress(30);
