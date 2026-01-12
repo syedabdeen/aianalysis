@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import { extractTextFromPDF, isPDF } from '@/lib/pdfTextExtractor';
 import { 
   Upload, FileText, X, Sparkles, Download, FileSpreadsheet,
   Award, AlertTriangle, CheckCircle, TrendingUp, DollarSign,
@@ -48,6 +49,7 @@ export default function OfferAnalysisPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [activeTab, setActiveTab] = useState('upload');
   const [dragActive, setDragActive] = useState(false);
@@ -103,32 +105,74 @@ export default function OfferAnalysisPage() {
     }
     setIsAnalyzing(true);
     setAnalysisProgress(0);
+    setProgressMessage('Preparing files...');
 
     try {
-      const filesData = await Promise.all(uploadedFiles.map(async (uf) => ({
-        name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file),
-      })));
-      setAnalysisProgress(20);
+      // Process files - extract PDF text client-side to reduce payload
+      setProgressMessage('Extracting document content...');
+      const filesData = await Promise.all(uploadedFiles.map(async (uf, index) => {
+        setProgressMessage(`Processing file ${index + 1}/${uploadedFiles.length}: ${uf.file.name}`);
+        setUploadedFiles(prev => prev.map((f, i) => 
+          i === index ? { ...f, status: 'processing' } : f
+        ));
+
+        if (isPDF(uf.file)) {
+          // Extract text from PDF client-side (much smaller payload)
+          try {
+            const text = await extractTextFromPDF(uf.file);
+            return { name: uf.file.name, type: uf.file.type, text };
+          } catch (err) {
+            console.error('PDF extraction failed, falling back to base64:', err);
+            // Fallback to base64 if text extraction fails
+            return { name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file) };
+          }
+        } else if (uf.file.type.startsWith('image/')) {
+          // Images still need base64 for vision API
+          return { name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file) };
+        } else {
+          // Other files - try to read as text or base64
+          return { name: uf.file.name, type: uf.file.type, data: await fileToBase64(uf.file) };
+        }
+      }));
+      
+      setAnalysisProgress(30);
+      setProgressMessage('Analyzing quotations with AI...');
 
       const { data, error } = await supabase.functions.invoke('ai-offer-analysis', {
         body: { files: filesData, companySettings: { name: settings.company_name_en, region: settings.region, currency: settings.default_currency || 'AED' } },
       });
 
-      if (error) throw error;
+      if (error) {
+        // Handle specific error types
+        if (error.message?.includes('Failed to fetch') || error.message?.includes('network')) {
+          throw new Error('Connection timed out. Try uploading fewer or smaller files.');
+        }
+        throw error;
+      }
+      
       setAnalysisProgress(80);
+      setProgressMessage('Building comparison report...');
       
       if (data.extractedQuotations) {
         setUploadedFiles(prev => prev.map((uf, i) => ({ ...uf, status: 'completed', extractedData: data.extractedQuotations[i] })));
       }
       setAnalysisResult(data.analysis);
       setAnalysisProgress(100);
+      setProgressMessage('Analysis complete!');
       setActiveTab('technical');
       setIsSaved(false);
       toast({ title: 'Analysis Complete', description: 'All quotations analyzed successfully' });
     } catch (error: any) {
-      toast({ title: 'Analysis Error', description: error.message || 'Failed to analyze', variant: 'destructive' });
+      console.error('Analysis error:', error);
+      setUploadedFiles(prev => prev.map(f => ({ ...f, status: f.status === 'processing' ? 'error' : f.status })));
+      toast({ 
+        title: 'Analysis Error', 
+        description: error.message || 'Failed to analyze. Try with fewer or smaller files.', 
+        variant: 'destructive' 
+      });
     } finally {
       setIsAnalyzing(false);
+      setProgressMessage('');
     }
   };
 
@@ -300,7 +344,7 @@ export default function OfferAnalysisPage() {
               </Card>
             )}
 
-            {isAnalyzing && <Card><CardContent className="p-6"><div className="flex items-center gap-3"><Loader2 className="h-5 w-5 animate-spin text-primary" /><span>Analyzing...</span></div><Progress value={analysisProgress} className="h-2 mt-4" /></CardContent></Card>}
+            {isAnalyzing && <Card><CardContent className="p-6"><div className="flex items-center gap-3"><Loader2 className="h-5 w-5 animate-spin text-primary" /><span>{progressMessage || 'Analyzing...'}</span></div><Progress value={analysisProgress} className="h-2 mt-4" /><p className="text-xs text-muted-foreground mt-2">{analysisProgress}% complete</p></CardContent></Card>}
 
             <div className="flex justify-center">
               <Button size="lg" onClick={startAnalysis} disabled={uploadedFiles.length < 1 || isAnalyzing}><Sparkles className="h-5 w-5 mr-2" />Start Analysis</Button>
