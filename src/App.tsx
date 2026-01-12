@@ -11,6 +11,7 @@ import MarketAnalysisPage from "./pages/analyzer/MarketAnalysisPage";
 import OfferAnalysisPage from "./pages/analyzer/OfferAnalysisPage";
 import AnalyzerSettings from "./pages/analyzer/AnalyzerSettings";
 import ReportsPage from "./pages/analyzer/ReportsPage";
+import InstallApp from "./pages/InstallApp";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -37,6 +38,9 @@ const App = () => (
               <Route path="/analyzer/offer-analysis" element={<OfferAnalysisPage />} />
               <Route path="/analyzer/reports" element={<ReportsPage />} />
               <Route path="/analyzer/settings" element={<AnalyzerSettings />} />
+              
+              {/* PWA Install page */}
+              <Route path="/install" element={<InstallApp />} />
               
               <Route path="*" element={<NotFound />} />
             </Routes>

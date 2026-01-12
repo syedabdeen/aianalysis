@@ -116,7 +116,7 @@ const InstallApp: React.FC = () => {
                     : 'You can access the app from your home screen'}
                 </p>
               </div>
-              <Button onClick={() => window.location.href = '/dashboard'} className="w-full">
+              <Button onClick={() => window.location.href = '/'} className="w-full">
                 {language === 'ar' ? 'فتح التطبيق' : 'Open App'}
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
