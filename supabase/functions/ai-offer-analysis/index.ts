@@ -42,128 +42,41 @@ serve(async (req) => {
 
     console.log(`Analyzing ${files.length} quotation files...`);
 
-    // Process each file and extract data using AI
-    const extractedQuotations: any[] = [];
-    
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      console.log(`Processing file ${i + 1}/${files.length}: ${file.name}`);
+    // Helper function to extract quotation from a single file
+    const extractQuotation = async (file: any, index: number): Promise<any> => {
+      console.log(`Processing file ${index + 1}/${files.length}: ${file.name}`);
       
-      const extractionPrompt = `You are an expert procurement analyst specializing in quotation analysis. Analyze this supplier quotation document thoroughly and extract ALL information with maximum detail.
+      const extractionPrompt = `You are an expert procurement analyst. Analyze this supplier quotation and extract ALL information.
 
-CRITICAL: Extract every piece of data visible in the document. Do not skip any items or details.
+CRITICAL: Extract NUMERIC values only for prices. No currency symbols or commas.
 
-Extract and structure the following:
+Extract:
+1. SUPPLIER: name, address, contact, phone, email
+2. QUOTATION: reference number, date (YYYY-MM-DD), validity days
+3. LINE ITEMS: itemNo, description, unit, quantity, unitPrice (NUMERIC), totalPrice (NUMERIC)
+4. COMMERCIAL: subtotal (NUMERIC), tax (NUMERIC), total (NUMERIC), currency, deliveryTerms, paymentTerms, deliveryDays
+5. TECHNICAL: specifications, brand, model, warranty, compliance, origin
 
-1. SUPPLIER INFORMATION:
-   - Company/Supplier name (exact as written)
-   - Full address
-   - Contact person name
-   - Phone/Fax numbers
-   - Email address
-   - Website if available
+PRICE EXTRACTION RULES:
+- Return 15000.00 NOT "AED 15,000"
+- Return 1234.56 NOT "$1,234.56"
+- If unknown, return 0
 
-2. QUOTATION DETAILS:
-   - Quotation/Reference number
-   - Date of quotation
-   - Validity period (in days)
-   - Revision number if any
-
-3. LINE ITEMS (Extract EVERY item):
-   - Item/Line number
-   - Full description (include all specs in description)
-   - Material/Part code if mentioned
-   - Unit of measure
-   - Quantity (numeric only, e.g., 10)
-   - Unit price (NUMERIC ONLY - e.g., 1500.00, NOT "AED 1,500")
-   - Total price per line (NUMERIC ONLY)
-   - Any discount mentioned (NUMERIC percentage or amount)
-   - VAT/Tax per item if shown (NUMERIC ONLY)
-
-4. COMMERCIAL TERMS:
-   - Subtotal before tax (NUMERIC ONLY - e.g., 15000.00, NOT "AED 15,000")
-   - Tax/VAT amount (NUMERIC ONLY)
-   - Grand Total (NUMERIC ONLY - this is the most important value!)
-   - Currency (detect from document or use ${companySettings?.currency || 'AED'})
-   - Delivery terms (FOB, CIF, EXW, DDP, etc.)
-   - Payment terms (Net 30, LC, etc.)
-   - Estimated delivery time in days (NUMERIC ONLY)
-   - Incoterms if mentioned
-
-CRITICAL FOR COMMERCIAL VALUES:
-- For subtotal, tax, total, unitPrice, totalPrice: Return ONLY the numeric value
-- Example: Return 15000.00 NOT "AED 15,000" or "15,000 AED"
-- Remove ALL currency symbols, commas, and text before returning
-- If you see "AED 15,000" return 15000
-- If you see "$1,234.56" return 1234.56
-- If a value cannot be determined from the document, return 0
-
-5. TECHNICAL SPECIFICATIONS:
-   - All specifications mentioned
-   - Brand name
-   - Model number
-   - Warranty period and terms
-   - Certifications/Compliance (ISO, CE, etc.)
-   - Country of origin
-   - Any deviations from requirements
-   - Technical notes/remarks
-
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY valid JSON:
 {
-  "supplier": { 
-    "name": "supplier company name", 
-    "address": "full address", 
-    "contact": "contact person", 
-    "phone": "phone number",
-    "email": "email address" 
-  },
-  "quotation": { 
-    "reference": "quote number", 
-    "date": "YYYY-MM-DD", 
-    "validityDays": 30 
-  },
-  "items": [
-    { 
-      "itemNo": 1, 
-      "description": "full item description with specs", 
-      "materialCode": "part code if any", 
-      "unit": "EA/PC/SET/etc", 
-      "quantity": 1, 
-      "unitPrice": 0.00, 
-      "totalPrice": 0.00, 
-      "discount": 0, 
-      "vat": 0 
-    }
-  ],
-  "commercial": { 
-    "subtotal": 0.00, 
-    "tax": 0.00, 
-    "total": 0.00, 
-    "currency": "AED", 
-    "deliveryTerms": "FOB/CIF/etc", 
-    "paymentTerms": "payment terms", 
-    "deliveryDays": 0,
-    "incoterms": "if mentioned"
-  },
-  "technical": { 
-    "specifications": ["spec1", "spec2"], 
-    "brand": "brand name", 
-    "model": "model number", 
-    "warranty": "warranty details", 
-    "compliance": ["ISO 9001", "CE"], 
-    "origin": "country",
-    "deviations": ["any deviations from requirements"],
-    "remarks": "additional technical notes"
-  }
+  "supplier": { "name": "", "address": "", "contact": "", "phone": "", "email": "" },
+  "quotation": { "reference": "", "date": "", "validityDays": 30 },
+  "items": [{ "itemNo": 1, "description": "", "unit": "EA", "quantity": 1, "unitPrice": 0, "totalPrice": 0 }],
+  "commercial": { "subtotal": 0, "tax": 0, "total": 0, "currency": "${companySettings?.currency || 'AED'}", "deliveryTerms": "", "paymentTerms": "", "deliveryDays": 0 },
+  "technical": { "specifications": [], "brand": "", "model": "", "warranty": "", "compliance": [], "origin": "" }
 }`;
 
       const messages: any[] = [
-        { role: 'system', content: 'You are an expert procurement document analyzer with extensive experience in extracting data from supplier quotations. Extract ALL data accurately and completely. Never skip items or abbreviate information.' },
+        { role: 'system', content: 'Extract quotation data accurately. Return ONLY valid JSON.' },
       ];
 
       // Handle different file types
       if (file.type?.includes('image') || file.data?.startsWith('data:image')) {
-        // Image files - use vision API
         messages.push({
           role: 'user',
           content: [
@@ -172,30 +85,27 @@ Return ONLY a valid JSON object with this exact structure:
           ]
         });
       } else if (file.text) {
-        // Text content extracted client-side (e.g., from PDF)
         messages.push({
           role: 'user',
-          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${file.text}`
+          content: `${extractionPrompt}\n\nDocument "${file.name}":\n${file.text.substring(0, 50000)}`
         });
       } else if (file.data) {
-      // Base64 data - process PDFs up to 500KB base64 (about 375KB file)
-        // Files are now limited to 2MB client-side, so we can handle more
-        if (file.type?.includes('pdf') && file.data.length > 500000) {
-          console.warn(`PDF file ${file.name} is very large (${(file.data.length / 1024).toFixed(0)}KB base64), truncating`);
-        }
-        // For large files, take a portion that AI can handle
-        const dataToUse = file.data.substring(0, 300000);
+        // Limit base64 data to 150KB for faster processing
+        const dataToUse = file.data.substring(0, 150000);
         messages.push({
           role: 'user',
-          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${dataToUse}`
+          content: `${extractionPrompt}\n\nDocument "${file.name}":\n${dataToUse}`
         });
       } else {
         console.warn(`No content available for ${file.name}`);
-        extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
-        continue;
+        return createPlaceholderQuotation(file.name, index + 1, companySettings);
       }
 
       try {
+        // Use faster model for extraction with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
         const extractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -203,38 +113,48 @@ Return ONLY a valid JSON object with this exact structure:
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'google/gemini-2.5-flash',
-            max_completion_tokens: 4000,
+            model: 'google/gemini-2.5-flash-lite', // Faster model for extraction
+            max_completion_tokens: 3000,
             messages,
           }),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         if (!extractionResponse.ok) {
           const errorText = await extractionResponse.text();
           console.error(`AI extraction error for ${file.name}:`, errorText);
-          // Continue with placeholder instead of failing
-          extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
-          continue;
+          return createPlaceholderQuotation(file.name, index + 1, companySettings);
         }
 
         const extractionData = await extractionResponse.json();
         const content = extractionData.choices?.[0]?.message?.content || '';
         
-        // Parse JSON from response
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const extracted = JSON.parse(jsonMatch[0]);
-          extractedQuotations.push(extracted);
           console.log(`Successfully extracted data from ${file.name}`);
+          return extracted;
         } else {
           console.error(`No JSON found in response for ${file.name}`);
-          extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
+          return createPlaceholderQuotation(file.name, index + 1, companySettings);
         }
-      } catch (e) {
-        console.error(`Failed to process ${file.name}:`, e);
-        extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
+      } catch (e: any) {
+        if (e.name === 'AbortError') {
+          console.error(`Extraction timeout for ${file.name}`);
+        } else {
+          console.error(`Failed to process ${file.name}:`, e);
+        }
+        return createPlaceholderQuotation(file.name, index + 1, companySettings);
       }
-    }
+    };
+
+    // Process all files in PARALLEL for speed
+    console.log(`Starting parallel extraction of ${files.length} files...`);
+    const extractionPromises = files.map((file: any, i: number) => extractQuotation(file, i));
+    const extractedQuotations = await Promise.all(extractionPromises);
+    console.log(`Parallel extraction complete for ${extractedQuotations.length} files`);
 
     console.log(`Extracted data from ${extractedQuotations.length} quotations`);
 
