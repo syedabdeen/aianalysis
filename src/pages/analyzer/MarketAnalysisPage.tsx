@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
+import jsPDF from 'jspdf';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { useAnalysisReports } from '@/hooks/useAnalysisReports';
@@ -262,29 +263,272 @@ export default function MarketAnalysisPage() {
     });
   };
 
-  const downloadPDF = () => {
+  const loadImageForPDF = (url: string): Promise<HTMLImageElement | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  };
+
+  const downloadPDF = async () => {
     if (!analysis) return;
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      toast({
-        title: language === 'ar' ? 'خطأ' : 'Error',
-        description: 'Please allow popups to download the report',
-        variant: 'destructive',
-      });
-      return;
-    }
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    let yPos = 15;
+    
+    const reportRef = `MA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    const currentDate = new Date();
+    const dateStr = currentDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timeStr = currentDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
-    const reportHTML = generatePDFReport();
-    printWindow.document.write(reportHTML);
-    printWindow.document.close();
-    printWindow.onload = () => {
-      printWindow.print();
+    const checkNewPage = (requiredSpace: number) => {
+      if (yPos + requiredSpace > pageHeight - 20) {
+        doc.addPage();
+        yPos = 15;
+        return true;
+      }
+      return false;
     };
 
+    // ===== HEADER WITH LOGO =====
+    let logoOffset = 0;
+    if (settings.logo_url) {
+      try {
+        const logoImg = await loadImageForPDF(settings.logo_url);
+        if (logoImg) {
+          doc.addImage(logoImg, 'JPEG', margin, yPos - 5, 25, 15);
+          logoOffset = 30;
+        }
+      } catch (error) {
+        console.warn('Failed to load logo:', error);
+      }
+    }
+
+    // Company Name
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(settings.company_name_en || 'Company Name', margin + logoOffset, yPos);
+    
+    // Date/Time (right)
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Date: ${dateStr}`, pageWidth - margin, yPos, { align: 'right' });
+    yPos += 5;
+    doc.text(`Time: ${timeStr}`, pageWidth - margin, yPos, { align: 'right' });
+    
+    // Company Address
+    if (settings.address_en) {
+      doc.setFontSize(9);
+      doc.text(settings.address_en, margin + logoOffset, yPos);
+    }
+    yPos += 5;
+    
+    // Contact info
+    if (settings.phone || settings.email) {
+      doc.setFontSize(8);
+      doc.text(`${settings.phone || ''} | ${settings.email || ''}`, margin + logoOffset, yPos);
+    }
+    yPos += 8;
+
+    // Line separator
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 8;
+
+    // Report Reference
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Report Reference: ${reportRef}`, margin, yPos);
+    yPos += 10;
+
+    // ===== TITLE =====
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MARKET ANALYSIS REPORT', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 12;
+
+    // ===== PRODUCT INFORMATION =====
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('1. Product Information', margin, yPos);
+    yPos += 7;
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Product Name: ${analysis.product.name}`, margin + 5, yPos);
+    yPos += 5;
+    doc.text(`Category: ${analysis.product.category}`, margin + 5, yPos);
+    yPos += 5;
+    const descLines = doc.splitTextToSize(`Description: ${analysis.product.description}`, pageWidth - margin * 2 - 10);
+    doc.text(descLines.slice(0, 3), margin + 5, yPos);
+    yPos += Math.min(descLines.length, 3) * 4 + 8;
+
+    // ===== SPECIFICATIONS =====
+    if (analysis.specifications) {
+      checkNewPage(30);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('2. Technical Specifications', margin, yPos);
+      yPos += 7;
+
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      if (analysis.specifications.material) {
+        doc.text(`Material: ${analysis.specifications.material}`, margin + 5, yPos);
+        yPos += 5;
+      }
+      if (analysis.specifications.dimensions) {
+        doc.text(`Dimensions: ${analysis.specifications.dimensions}`, margin + 5, yPos);
+        yPos += 5;
+      }
+      if (analysis.specifications.power) {
+        doc.text(`Power: ${analysis.specifications.power}`, margin + 5, yPos);
+        yPos += 5;
+      }
+      if (analysis.specifications.capacity) {
+        doc.text(`Capacity: ${analysis.specifications.capacity}`, margin + 5, yPos);
+        yPos += 5;
+      }
+      if (analysis.specifications.standards?.length) {
+        doc.text(`Standards: ${analysis.specifications.standards.join(', ')}`, margin + 5, yPos);
+        yPos += 5;
+      }
+      yPos += 5;
+    }
+
+    // ===== MANUFACTURERS TABLE =====
+    checkNewPage(50);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`3. Manufacturers (${analysis.manufacturers.length})`, margin, yPos);
+    yPos += 8;
+
+    // Table header
+    const mfgCols = ['Name', 'Country', 'Email', 'Phone', 'Website', 'Address'];
+    const mfgColWidths = [35, 20, 40, 25, 35, 30];
+    const rowHeight = 7;
+
+    doc.setFillColor(230, 230, 230);
+    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    let xPos = margin;
+    mfgCols.forEach((col, i) => {
+      doc.text(col, xPos + 1, yPos);
+      xPos += mfgColWidths[i];
+    });
+    yPos += rowHeight;
+
+    doc.setFont('helvetica', 'normal');
+    analysis.manufacturers.forEach((m, idx) => {
+      checkNewPage(rowHeight + 5);
+      if (idx % 2 === 0) {
+        doc.setFillColor(248, 248, 248);
+        doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+      }
+      xPos = margin;
+      doc.text(String(m.name || '').substring(0, 18), xPos + 1, yPos); xPos += mfgColWidths[0];
+      doc.text(String(m.country || '').substring(0, 10), xPos + 1, yPos); xPos += mfgColWidths[1];
+      doc.text(String(m.email || 'N/A').substring(0, 22), xPos + 1, yPos); xPos += mfgColWidths[2];
+      doc.text(String(m.phone || 'N/A').substring(0, 14), xPos + 1, yPos); xPos += mfgColWidths[3];
+      doc.text(String(m.website || 'N/A').substring(0, 18), xPos + 1, yPos); xPos += mfgColWidths[4];
+      doc.text(String(m.address || 'N/A').substring(0, 16), xPos + 1, yPos);
+      yPos += rowHeight;
+    });
+    yPos += 10;
+
+    // ===== SUPPLIERS TABLE =====
+    checkNewPage(50);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`4. Suppliers (${analysis.suppliers.length})`, margin, yPos);
+    yPos += 8;
+
+    const supCols = ['Name', 'City', 'Contact', 'Email', 'Phone', 'Address'];
+    const supColWidths = [35, 20, 30, 40, 25, 35];
+
+    doc.setFillColor(230, 230, 230);
+    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    xPos = margin;
+    supCols.forEach((col, i) => {
+      doc.text(col, xPos + 1, yPos);
+      xPos += supColWidths[i];
+    });
+    yPos += rowHeight;
+
+    doc.setFont('helvetica', 'normal');
+    analysis.suppliers.forEach((s, idx) => {
+      checkNewPage(rowHeight + 5);
+      if (idx % 2 === 0) {
+        doc.setFillColor(248, 248, 248);
+        doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+      }
+      xPos = margin;
+      doc.text(String(s.name || '').substring(0, 18), xPos + 1, yPos); xPos += supColWidths[0];
+      doc.text(String(s.city || '').substring(0, 10), xPos + 1, yPos); xPos += supColWidths[1];
+      doc.text(String(s.contactPerson || 'N/A').substring(0, 16), xPos + 1, yPos); xPos += supColWidths[2];
+      doc.text(String(s.email || 'N/A').substring(0, 22), xPos + 1, yPos); xPos += supColWidths[3];
+      doc.text(String(s.phone || 'N/A').substring(0, 14), xPos + 1, yPos); xPos += supColWidths[4];
+      doc.text(String(s.address || 'N/A').substring(0, 18), xPos + 1, yPos);
+      yPos += rowHeight;
+    });
+    yPos += 10;
+
+    // ===== MARKET SUMMARY =====
+    checkNewPage(50);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('5. Market Summary', margin, yPos);
+    yPos += 8;
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Price Range: ${analysis.marketSummary.priceRange.currency} ${analysis.marketSummary.priceRange.min.toLocaleString()} - ${analysis.marketSummary.priceRange.max.toLocaleString()}`, margin + 5, yPos);
+    yPos += 5;
+    doc.text(`Availability: ${analysis.marketSummary.availability.toUpperCase()}`, margin + 5, yPos);
+    yPos += 5;
+    doc.text(`Lead Time: ${analysis.marketSummary.leadTime}`, margin + 5, yPos);
+    yPos += 8;
+
+    // Recommendation box
+    doc.setFillColor(240, 249, 255);
+    doc.setDrawColor(49, 130, 206);
+    doc.setLineWidth(0.5);
+    const recLines = doc.splitTextToSize(`AI Recommendation: ${analysis.marketSummary.recommendation}`, pageWidth - margin * 2 - 10);
+    const boxHeight = Math.max(20, recLines.length * 4 + 10);
+    doc.rect(margin, yPos - 3, pageWidth - margin * 2, boxHeight, 'FD');
+    doc.setFontSize(9);
+    doc.text(recLines, margin + 5, yPos + 4);
+    yPos += boxHeight + 8;
+
+    // Risks
+    if (analysis.marketSummary.risks?.length) {
+      checkNewPage(20);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Risk Notes:', margin, yPos);
+      yPos += 5;
+      doc.setFont('helvetica', 'normal');
+      analysis.marketSummary.risks.forEach(risk => {
+        doc.text(`• ${risk}`, margin + 5, yPos);
+        yPos += 4;
+      });
+    }
+
+    // Save PDF
+    doc.save(`market-analysis-${reportRef}.pdf`);
+
     toast({
-      title: language === 'ar' ? 'تم الفتح' : 'Report Opened',
-      description: language === 'ar' ? 'استخدم خيار الطباعة لحفظ PDF' : 'Use print dialog to save as PDF',
+      title: language === 'ar' ? 'تم التنزيل' : 'Downloaded',
+      description: language === 'ar' ? 'تم تنزيل تقرير PDF' : 'PDF report downloaded',
     });
   };
 

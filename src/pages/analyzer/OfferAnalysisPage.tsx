@@ -205,7 +205,17 @@ export default function OfferAnalysisPage() {
     setTimeout(() => navigate(homePath), 1000);
   };
 
-  const downloadPDF = () => {
+  const loadImageForPDF = (url: string): Promise<HTMLImageElement | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  };
+
+  const downloadPDF = async () => {
     if (!analysisResult) return;
     
     // Use landscape A4 for better table display
@@ -234,11 +244,24 @@ export default function OfferAnalysisPage() {
     const dateStr = currentDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const timeStr = currentDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     
-    // ===== HEADER SECTION =====
+    // ===== HEADER SECTION WITH LOGO =====
+    let logoOffset = 0;
+    if (settings.logo_url) {
+      try {
+        const logoImg = await loadImageForPDF(settings.logo_url);
+        if (logoImg) {
+          doc.addImage(logoImg, 'JPEG', margin, yPos - 5, 25, 15);
+          logoOffset = 30;
+        }
+      } catch (error) {
+        console.warn('Failed to load logo:', error);
+      }
+    }
+
     // Company Name (left)
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
-    doc.text(settings.company_name_en || 'Company Name', margin, yPos);
+    doc.text(settings.company_name_en || 'Company Name', margin + logoOffset, yPos);
     
     // Date/Time (right)
     doc.setFontSize(9);
@@ -250,7 +273,7 @@ export default function OfferAnalysisPage() {
     // Company Address
     if (settings.address_en) {
       doc.setFontSize(9);
-      doc.text(settings.address_en, margin, yPos);
+      doc.text(settings.address_en, margin + logoOffset, yPos);
     }
     yPos += 8;
     
