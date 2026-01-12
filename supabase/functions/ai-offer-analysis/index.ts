@@ -5,6 +5,21 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Parse numeric value from various formats (e.g., "AED 15,000" -> 15000)
+function parseNumericValue(value: any): number {
+  if (typeof value === 'number' && !isNaN(value)) return value;
+  if (!value) return 0;
+  
+  // Convert to string and clean
+  const str = String(value)
+    .replace(/[A-Za-z$€£¥₹,\s]/g, '') // Remove currency symbols, letters, commas, spaces
+    .replace(/[^\d.-]/g, '') // Keep only digits, dots, and minus
+    .trim();
+  
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : num;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -59,21 +74,29 @@ Extract and structure the following:
    - Full description (include all specs in description)
    - Material/Part code if mentioned
    - Unit of measure
-   - Quantity
-   - Unit price (numeric value only)
-   - Total price per line
-   - Any discount mentioned
-   - VAT/Tax per item if shown
+   - Quantity (numeric only, e.g., 10)
+   - Unit price (NUMERIC ONLY - e.g., 1500.00, NOT "AED 1,500")
+   - Total price per line (NUMERIC ONLY)
+   - Any discount mentioned (NUMERIC percentage or amount)
+   - VAT/Tax per item if shown (NUMERIC ONLY)
 
 4. COMMERCIAL TERMS:
-   - Subtotal before tax
-   - Tax/VAT amount
-   - Grand Total
+   - Subtotal before tax (NUMERIC ONLY - e.g., 15000.00, NOT "AED 15,000")
+   - Tax/VAT amount (NUMERIC ONLY)
+   - Grand Total (NUMERIC ONLY - this is the most important value!)
    - Currency (detect from document or use ${companySettings?.currency || 'AED'})
    - Delivery terms (FOB, CIF, EXW, DDP, etc.)
    - Payment terms (Net 30, LC, etc.)
-   - Estimated delivery time in days
+   - Estimated delivery time in days (NUMERIC ONLY)
    - Incoterms if mentioned
+
+CRITICAL FOR COMMERCIAL VALUES:
+- For subtotal, tax, total, unitPrice, totalPrice: Return ONLY the numeric value
+- Example: Return 15000.00 NOT "AED 15,000" or "15,000 AED"
+- Remove ALL currency symbols, commas, and text before returning
+- If you see "AED 15,000" return 15000
+- If you see "$1,234.56" return 1234.56
+- If a value cannot be determined from the document, return 0
 
 5. TECHNICAL SPECIFICATIONS:
    - All specifications mentioned
@@ -155,16 +178,16 @@ Return ONLY a valid JSON object with this exact structure:
           content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${file.text}`
         });
       } else if (file.data) {
-        // Base64 data - only use if it's not a massive payload
-        // For PDFs sent as base64, we can't process them well, so create placeholder
-        if (file.type?.includes('pdf') && file.data.length > 100000) {
-          console.warn(`PDF file ${file.name} sent as base64 is too large, using placeholder`);
-          extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
-          continue;
+      // Base64 data - process PDFs up to 500KB base64 (about 375KB file)
+        // Files are now limited to 2MB client-side, so we can handle more
+        if (file.type?.includes('pdf') && file.data.length > 500000) {
+          console.warn(`PDF file ${file.name} is very large (${(file.data.length / 1024).toFixed(0)}KB base64), truncating`);
         }
+        // For large files, take a portion that AI can handle
+        const dataToUse = file.data.substring(0, 300000);
         messages.push({
           role: 'user',
-          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${file.data.substring(0, 50000)}`
+          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${dataToUse}`
         });
       } else {
         console.warn(`No content available for ${file.name}`);
@@ -215,52 +238,79 @@ Return ONLY a valid JSON object with this exact structure:
 
     console.log(`Extracted data from ${extractedQuotations.length} quotations`);
 
-    // Validate and normalize all extracted quotations
-    const validatedQuotations = extractedQuotations.map((q, index) => ({
-      supplier: {
-        name: q?.supplier?.name || `Supplier ${index + 1}`,
-        address: q?.supplier?.address || '',
-        contact: q?.supplier?.contact || '',
-        phone: q?.supplier?.phone || '',
-        email: q?.supplier?.email || ''
-      },
-      quotation: {
-        reference: q?.quotation?.reference || `Q-${index + 1}`,
-        date: q?.quotation?.date || new Date().toISOString().split('T')[0],
-        validityDays: q?.quotation?.validityDays || 30
-      },
-      items: Array.isArray(q?.items) ? q.items.map((item: any, idx: number) => ({
+    // Validate and normalize all extracted quotations using parseNumericValue
+    const validatedQuotations = extractedQuotations.map((q, index) => {
+      // Parse items with proper numeric handling
+      const items = Array.isArray(q?.items) ? q.items.map((item: any, idx: number) => ({
         itemNo: item?.itemNo || idx + 1,
         description: item?.description || '',
         materialCode: item?.materialCode || '',
         unit: item?.unit || 'EA',
-        quantity: Number(item?.quantity) || 0,
-        unitPrice: Number(item?.unitPrice) || 0,
-        totalPrice: Number(item?.totalPrice) || 0,
-        discount: Number(item?.discount) || 0,
-        vat: Number(item?.vat) || 0
-      })) : [],
-      commercial: {
-        subtotal: Number(q?.commercial?.subtotal) || 0,
-        tax: Number(q?.commercial?.tax) || 0,
-        total: Number(q?.commercial?.total) || 0,
-        currency: q?.commercial?.currency || companySettings?.currency || 'AED',
-        deliveryTerms: q?.commercial?.deliveryTerms || '',
-        paymentTerms: q?.commercial?.paymentTerms || '',
-        deliveryDays: Number(q?.commercial?.deliveryDays) || 0,
-        incoterms: q?.commercial?.incoterms || ''
-      },
-      technical: {
-        specifications: Array.isArray(q?.technical?.specifications) ? q.technical.specifications : [],
-        brand: q?.technical?.brand || '',
-        model: q?.technical?.model || '',
-        warranty: q?.technical?.warranty || '',
-        compliance: Array.isArray(q?.technical?.compliance) ? q.technical.compliance : [],
-        origin: q?.technical?.origin || '',
-        deviations: Array.isArray(q?.technical?.deviations) ? q.technical.deviations : [],
-        remarks: q?.technical?.remarks || ''
+        quantity: parseNumericValue(item?.quantity) || 1,
+        unitPrice: parseNumericValue(item?.unitPrice),
+        totalPrice: parseNumericValue(item?.totalPrice),
+        discount: parseNumericValue(item?.discount),
+        vat: parseNumericValue(item?.vat)
+      })) : [];
+      
+      // Parse commercial values with proper numeric handling
+      let subtotal = parseNumericValue(q?.commercial?.subtotal);
+      let tax = parseNumericValue(q?.commercial?.tax);
+      let total = parseNumericValue(q?.commercial?.total);
+      
+      // Fallback: If total is 0 but items have prices, calculate from items
+      if (total === 0 && items.length > 0) {
+        const itemsTotal = items.reduce((sum: number, item: any) => {
+          const lineTotal = item.totalPrice > 0 ? item.totalPrice : (item.unitPrice * item.quantity);
+          return sum + lineTotal;
+        }, 0);
+        if (itemsTotal > 0) {
+          total = itemsTotal;
+          console.log(`Calculated total from items for ${q?.supplier?.name}: ${total}`);
+        }
       }
-    }));
+      
+      // Fallback: Calculate subtotal if missing
+      if (subtotal === 0 && total > 0) {
+        subtotal = total - tax;
+      }
+      
+      return {
+        supplier: {
+          name: q?.supplier?.name || `Supplier ${index + 1}`,
+          address: q?.supplier?.address || '',
+          contact: q?.supplier?.contact || '',
+          phone: q?.supplier?.phone || '',
+          email: q?.supplier?.email || ''
+        },
+        quotation: {
+          reference: q?.quotation?.reference || `Q-${index + 1}`,
+          date: q?.quotation?.date || new Date().toISOString().split('T')[0],
+          validityDays: parseNumericValue(q?.quotation?.validityDays) || 30
+        },
+        items,
+        commercial: {
+          subtotal,
+          tax,
+          total,
+          currency: q?.commercial?.currency || companySettings?.currency || 'AED',
+          deliveryTerms: q?.commercial?.deliveryTerms || '',
+          paymentTerms: q?.commercial?.paymentTerms || '',
+          deliveryDays: parseNumericValue(q?.commercial?.deliveryDays),
+          incoterms: q?.commercial?.incoterms || ''
+        },
+        technical: {
+          specifications: Array.isArray(q?.technical?.specifications) ? q.technical.specifications : [],
+          brand: q?.technical?.brand || '',
+          model: q?.technical?.model || '',
+          warranty: q?.technical?.warranty || '',
+          compliance: Array.isArray(q?.technical?.compliance) ? q.technical.compliance : [],
+          origin: q?.technical?.origin || '',
+          deviations: Array.isArray(q?.technical?.deviations) ? q.technical.deviations : [],
+          remarks: q?.technical?.remarks || ''
+        }
+      };
+    });
 
     // Generate comprehensive comparison analysis
     // Sanitize supplier names to prevent JSON parsing issues
