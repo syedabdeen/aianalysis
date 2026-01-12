@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
+import jsPDF from 'jspdf';
 import { 
   Upload, FileText, X, Sparkles, Download, FileSpreadsheet,
   Award, AlertTriangle, CheckCircle, TrendingUp, DollarSign,
@@ -201,13 +202,183 @@ export default function OfferAnalysisPage() {
 
   const downloadPDF = () => {
     if (!analysisResult) return;
-    const quotations = uploadedFiles.filter(f => f.extractedData).map(f => f.extractedData);
-    const supplierNames = quotations.map((q: any) => q?.supplier?.name || 'Unknown');
     
-    const html = `<!DOCTYPE html><html><head><title>Comparative Analysis</title><style>body{font-family:Arial;padding:40px;max-width:1100px;margin:0 auto}.header{border-bottom:2px solid #333;padding-bottom:20px;margin-bottom:30px}h1{color:#1a365d}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #e2e8f0;padding:8px;text-align:left}th{background:#f7fafc}.lowest{background:#c6f6d5}.best-value{background:#bee3f8}</style></head><body><div class="header">${settings.logo_url?`<img src="${settings.logo_url}" style="max-height:60px"/>`:''}<h1>${settings.company_name_en||'Company'}</h1><p>${settings.address_en||''}</p></div><h1 style="text-align:center">Quotation Comparative Analysis</h1><p style="text-align:center;color:#718096">Generated: ${new Date().toLocaleDateString()}</p><h2>Commercial Comparison</h2><table><thead><tr><th>Criteria</th>${supplierNames.map((n:string)=>`<th>${n}</th>`).join('')}</tr></thead><tbody>${analysisResult.commercialComparison.map(row=>`<tr><td><strong>${row.criteria}</strong></td>${supplierNames.map((name:string)=>{const val=row.suppliers[name];return`<td class="${val?.isLowest?'lowest':''}">${val?.value||'N/A'}</td>`;}).join('')}</tr>`).join('')}</tbody></table><h2>AI Recommendation</h2><div style="background:#ebf8ff;border-left:4px solid #3182ce;padding:15px"><p><strong>Best Value:</strong> ${analysisResult.summary.bestValue}</p><p><strong>Lowest Price:</strong> ${analysisResult.summary.lowestEvaluated}</p><p><strong>Recommendation:</strong> ${analysisResult.summary.recommendation}</p></div></body></html>`;
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    let yPos = 20;
     
-    const w = window.open('', '_blank');
-    if (w) { w.document.write(html); w.document.close(); w.onload = () => w.print(); }
+    // Get supplier names
+    const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
+    
+    // Helper function to add new page if needed
+    const checkNewPage = (requiredSpace: number) => {
+      if (yPos + requiredSpace > pageHeight - 20) {
+        doc.addPage();
+        yPos = 20;
+        return true;
+      }
+      return false;
+    };
+    
+    // Company Header
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text(settings.company_name_en || 'Company', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 8;
+    
+    if (settings.address_en) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(settings.address_en, pageWidth / 2, yPos, { align: 'center' });
+      yPos += 6;
+    }
+    
+    // Line separator
+    doc.setDrawColor(100, 100, 100);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 10;
+    
+    // Report Title
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Quotation Comparative Analysis', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 6;
+    
+    // Date
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth / 2, yPos, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+    yPos += 12;
+    
+    // Commercial Comparison Section
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Commercial Comparison', margin, yPos);
+    yPos += 8;
+    
+    // Draw Commercial Table
+    const colWidth = (pageWidth - margin * 2) / (suppliers.length + 1);
+    const rowHeight = 8;
+    
+    // Table Header
+    doc.setFillColor(240, 240, 240);
+    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Criteria', margin + 2, yPos);
+    suppliers.forEach((supplier, i) => {
+      const xPos = margin + colWidth + (i * colWidth);
+      doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: colWidth - 4 });
+    });
+    yPos += rowHeight;
+    
+    // Table Rows
+    doc.setFont('helvetica', 'normal');
+    analysisResult.commercialComparison.forEach((row) => {
+      checkNewPage(rowHeight + 5);
+      
+      // Alternate row background
+      doc.setFontSize(8);
+      doc.text(row.criteria, margin + 2, yPos, { maxWidth: colWidth - 4 });
+      
+      suppliers.forEach((supplier, i) => {
+        const val = row.suppliers[supplier];
+        const xPos = margin + colWidth + (i * colWidth);
+        
+        if (val?.isLowest) {
+          doc.setFillColor(200, 246, 213);
+          doc.rect(xPos, yPos - 5, colWidth, rowHeight, 'F');
+          doc.setFont('helvetica', 'bold');
+        }
+        
+        doc.text(val?.value || 'N/A', xPos + 2, yPos, { maxWidth: colWidth - 4 });
+        doc.setFont('helvetica', 'normal');
+      });
+      
+      yPos += rowHeight;
+    });
+    
+    yPos += 10;
+    checkNewPage(50);
+    
+    // Technical Comparison Section
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Technical Comparison', margin, yPos);
+    yPos += 8;
+    
+    // Technical Table Header
+    doc.setFillColor(240, 240, 240);
+    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Criteria', margin + 2, yPos);
+    suppliers.forEach((supplier, i) => {
+      const xPos = margin + colWidth + (i * colWidth);
+      doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: colWidth - 4 });
+    });
+    yPos += rowHeight;
+    
+    // Technical Table Rows
+    doc.setFont('helvetica', 'normal');
+    analysisResult.technicalComparison.forEach((row) => {
+      checkNewPage(rowHeight + 5);
+      
+      doc.setFontSize(8);
+      doc.text(row.criteria, margin + 2, yPos, { maxWidth: colWidth - 4 });
+      
+      suppliers.forEach((supplier, i) => {
+        const val = row.suppliers[supplier];
+        const xPos = margin + colWidth + (i * colWidth);
+        const displayVal = `${val?.value || 'N/A'} ${val?.score ? `(${val.score})` : ''}`;
+        doc.text(displayVal, xPos + 2, yPos, { maxWidth: colWidth - 4 });
+      });
+      
+      yPos += rowHeight;
+    });
+    
+    yPos += 15;
+    checkNewPage(60);
+    
+    // AI Recommendation Section
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('AI Recommendation Summary', margin, yPos);
+    yPos += 10;
+    
+    // Recommendation Box
+    doc.setFillColor(235, 248, 255);
+    doc.setDrawColor(49, 130, 206);
+    doc.rect(margin, yPos - 5, pageWidth - margin * 2, 45, 'FD');
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Best Value:', margin + 5, yPos + 3);
+    doc.setFont('helvetica', 'normal');
+    doc.text(analysisResult.summary.bestValue || 'N/A', margin + 35, yPos + 3);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Lowest Price:', margin + 5, yPos + 12);
+    doc.setFont('helvetica', 'normal');
+    doc.text(analysisResult.summary.lowestEvaluated || 'N/A', margin + 35, yPos + 12);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Recommendation:', margin + 5, yPos + 21);
+    doc.setFont('helvetica', 'normal');
+    
+    // Wrap recommendation text
+    const recommendationLines = doc.splitTextToSize(
+      analysisResult.summary.recommendation || 'N/A',
+      pageWidth - margin * 2 - 10
+    );
+    doc.text(recommendationLines.slice(0, 2), margin + 5, yPos + 30);
+    
+    // Save PDF directly (no print dialog)
+    doc.save(`offer-analysis-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const downloadExcel = () => {
