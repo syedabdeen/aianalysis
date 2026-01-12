@@ -200,8 +200,9 @@ export default function OfferAnalysisPage() {
       description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
     });
     
-    // Navigate to home after saving
-    setTimeout(() => navigate('/'), 1000);
+    // Navigate to home after saving - use /analyzer if on analyzer path
+    const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
+    setTimeout(() => navigate(homePath), 1000);
   };
 
   const downloadPDF = () => {
@@ -500,8 +501,9 @@ export default function OfferAnalysisPage() {
       description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
     });
     
-    // Navigate to home after download
-    setTimeout(() => navigate('/'), 1000);
+    // Navigate to home after download - use /analyzer if on analyzer path
+    const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
+    setTimeout(() => navigate(homePath), 1000);
   };
 
   const downloadExcel = () => {
@@ -545,8 +547,9 @@ export default function OfferAnalysisPage() {
       description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
     });
     
-    // Navigate to home after download
-    setTimeout(() => navigate('/'), 1000);
+    // Navigate to home after download - use /analyzer if on analyzer path
+    const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
+    setTimeout(() => navigate(homePath), 1000);
   };
 
   const getRecommendationBadge = (rec: string) => {

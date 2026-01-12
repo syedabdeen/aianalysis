@@ -23,12 +23,21 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
-            <Routes>
+          <Routes>
+              {/* Primary routes */}
               <Route path="/" element={<AnalyzerHome />} />
               <Route path="/market-analysis" element={<MarketAnalysisPage />} />
               <Route path="/offer-analysis" element={<OfferAnalysisPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/settings" element={<AnalyzerSettings />} />
+              
+              {/* Alias routes for /analyzer prefix */}
+              <Route path="/analyzer" element={<AnalyzerHome />} />
+              <Route path="/analyzer/market-analysis" element={<MarketAnalysisPage />} />
+              <Route path="/analyzer/offer-analysis" element={<OfferAnalysisPage />} />
+              <Route path="/analyzer/reports" element={<ReportsPage />} />
+              <Route path="/analyzer/settings" element={<AnalyzerSettings />} />
+              
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
