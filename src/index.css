@@ -1,0 +1,565 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Orbitron:wght@400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* PROCUREMIND AI - Futuristic Metallic Blue Design System */
+
+@layer base {
+  :root {
+    /* Light Mode - Clean Professional */
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Metallic Blue Primary */
+    --primary: 200 80% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Steel Secondary */
+    --secondary: 215 20% 90%;
+    --secondary-foreground: 222 47% 11%;
+
+    /* Muted */
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    /* Accent - Electric Sky Blue */
+    --accent: 195 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 200 80% 45%;
+
+    --radius: 0.75rem;
+
+    /* Custom Metallic Colors */
+    --metallic-blue: 200 80% 45%;
+    --metallic-blue-light: 195 100% 55%;
+    --metallic-blue-dark: 210 70% 30%;
+    --steel-silver: 210 15% 40%;
+    --chrome: 210 10% 60%;
+    --graphite: 220 13% 93%;
+    --navy-deep: 222 47% 11%;
+    --navy-mid: 218 33% 17%;
+    --glow-blue: 195 100% 50%;
+    --glow-cyan: 185 100% 55%;
+
+    /* Sidebar */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 200 80% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 20% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 200 80% 45%;
+
+    /* Success/Warning colors */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+  }
+
+  .dark {
+    /* Deep Navy Background */
+    --background: 218 50% 6%;
+    --foreground: 210 40% 92%;
+
+    /* Metallic Cards */
+    --card: 218 40% 10%;
+    --card-foreground: 210 40% 92%;
+
+    --popover: 218 45% 8%;
+    --popover-foreground: 210 40% 92%;
+
+    /* Metallic Blue Primary */
+    --primary: 200 80% 55%;
+    --primary-foreground: 218 50% 6%;
+
+    /* Steel Secondary */
+    --secondary: 215 15% 35%;
+    --secondary-foreground: 210 40% 92%;
+
+    /* Muted */
+    --muted: 218 35% 15%;
+    --muted-foreground: 215 20% 60%;
+
+    /* Accent - Electric Sky Blue */
+    --accent: 195 100% 60%;
+    --accent-foreground: 218 50% 6%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 215 30% 20%;
+    --input: 218 35% 15%;
+    --ring: 200 80% 55%;
+
+    /* Custom Metallic Colors */
+    --metallic-blue: 200 80% 55%;
+    --metallic-blue-light: 195 100% 60%;
+    --metallic-blue-dark: 210 70% 35%;
+    --steel-silver: 210 15% 82%;
+    --chrome: 210 10% 90%;
+    --graphite: 220 20% 12%;
+    --navy-deep: 218 50% 6%;
+    --navy-mid: 218 40% 10%;
+    --glow-blue: 195 100% 60%;
+    --glow-cyan: 185 100% 65%;
+
+    /* Sidebar */
+    --sidebar-background: 218 45% 8%;
+    --sidebar-foreground: 210 40% 92%;
+    --sidebar-primary: 200 80% 55%;
+    --sidebar-primary-foreground: 218 50% 6%;
+    --sidebar-accent: 218 35% 15%;
+    --sidebar-accent-foreground: 210 40% 92%;
+    --sidebar-border: 215 30% 20%;
+    --sidebar-ring: 200 80% 55%;
+
+    /* Success/Warning colors */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  /* Glassmorphism Card */
+  .glass-card {
+    @apply bg-card/60 backdrop-blur-xl border border-border/50 rounded-2xl;
+    box-shadow: 
+      0 8px 32px rgba(51, 200, 255, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* Metallic Card */
+  .metallic-card {
+    @apply relative overflow-hidden rounded-2xl;
+    background: linear-gradient(
+      145deg,
+      hsl(var(--card)) 0%,
+      hsl(var(--graphite)) 50%,
+      hsl(var(--card)) 100%
+    );
+    border: 1px solid hsl(var(--border));
+    box-shadow: 
+      0 10px 40px rgba(0, 0, 0, 0.4),
+      0 0 0 1px rgba(51, 200, 255, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .metallic-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--metallic-blue-light) / 0.5),
+      transparent
+    );
+  }
+
+  /* Neon Glow Border */
+  .glow-border {
+    @apply relative;
+    box-shadow: 
+      0 0 20px hsl(var(--glow-blue) / 0.3),
+      0 0 40px hsl(var(--glow-blue) / 0.1);
+  }
+
+  .glow-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--metallic-blue)) 0%,
+      hsl(var(--glow-cyan)) 50%,
+      hsl(var(--metallic-blue)) 100%
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Metallic Button */
+  .btn-metallic {
+    @apply relative px-8 py-4 rounded-xl font-semibold text-primary-foreground overflow-hidden transition-all duration-300;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--metallic-blue-dark)) 0%,
+      hsl(var(--metallic-blue)) 50%,
+      hsl(var(--metallic-blue-light)) 100%
+    );
+    box-shadow: 
+      0 4px 20px hsl(var(--glow-blue) / 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  }
+
+  .btn-metallic:hover {
+    transform: translateY(-2px);
+    box-shadow: 
+      0 8px 30px hsl(var(--glow-blue) / 0.6),
+      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  }
+
+  /* Glass Button */
+  .btn-glass {
+    @apply relative px-8 py-4 rounded-xl font-semibold text-foreground overflow-hidden transition-all duration-300;
+    background: hsl(var(--muted) / 0.5);
+    backdrop-filter: blur(10px);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  .btn-glass:hover {
+    background: hsl(var(--muted) / 0.7);
+    border-color: hsl(var(--metallic-blue) / 0.5);
+    box-shadow: 0 0 20px hsl(var(--glow-blue) / 0.2);
+  }
+
+  /* Hexagon Node */
+  .hexagon {
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  }
+
+  /* Gradient Text */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--steel-silver)) 0%,
+      hsl(var(--chrome)) 50%,
+      hsl(var(--steel-silver)) 100%
+    );
+  }
+
+  .gradient-text-blue {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--metallic-blue)) 0%,
+      hsl(var(--glow-cyan)) 100%
+    );
+  }
+
+  /* Animated Glow */
+  .animate-glow {
+    animation: glow-pulse 3s ease-in-out infinite;
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% {
+      box-shadow: 
+        0 0 20px hsl(var(--glow-blue) / 0.3),
+        0 0 40px hsl(var(--glow-blue) / 0.1);
+    }
+    50% {
+      box-shadow: 
+        0 0 30px hsl(var(--glow-blue) / 0.5),
+        0 0 60px hsl(var(--glow-blue) / 0.2);
+    }
+  }
+
+  /* Float Animation */
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-20px); }
+  }
+
+  /* Slide Up Animation */
+  .animate-slide-up {
+    animation: slide-up 0.6s ease-out forwards;
+  }
+
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Fade In Animation */
+  .animate-fade-in {
+    animation: fade-in 0.8s ease-out forwards;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* Shimmer Effect */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--chrome) / 0.1),
+      transparent
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* Neon Line */
+  .neon-line {
+    @apply h-px w-full;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--glow-blue)),
+      transparent
+    );
+    box-shadow: 0 0 10px hsl(var(--glow-blue) / 0.5);
+  }
+
+  /* Grid Pattern */
+  .grid-pattern {
+    background-image: 
+      linear-gradient(hsl(var(--border) / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.3) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+
+  /* Circuit Pattern */
+  .circuit-pattern {
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg stroke='%2333C8FF' stroke-width='0.5' stroke-opacity='0.1'%3E%3Cpath d='M30 0v30M0 30h60'/%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  /* Navigation Item Hover Effect */
+  .nav-item-hover {
+    @apply relative transition-all duration-200;
+  }
+
+  .nav-item-hover::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.1) 0%,
+      transparent 50%
+    );
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .nav-item-hover:hover::before {
+    opacity: 1;
+  }
+
+  /* KPI Card Hover */
+  .kpi-card {
+    @apply relative overflow-hidden transition-all duration-300;
+  }
+
+  .kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 
+      0 8px 25px hsl(var(--primary) / 0.15),
+      0 0 0 1px hsl(var(--primary) / 0.1);
+  }
+
+  /* Active Module Indicator */
+  .module-active {
+    @apply relative;
+  }
+
+  .module-active::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 60%;
+    border-radius: 0 4px 4px 0;
+    background: linear-gradient(
+      180deg,
+      hsl(var(--primary)) 0%,
+      hsl(var(--glow-cyan)) 100%
+    );
+    box-shadow: 0 0 10px hsl(var(--primary) / 0.5);
+  }
+
+  /* Sub-module Tab Active */
+  .tab-active {
+    @apply relative;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--primary) / 0.15) 0%,
+      hsl(var(--primary) / 0.05) 100%
+    );
+    border: 1px solid hsl(var(--primary) / 0.3);
+  }
+
+  .tab-active::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40%;
+    height: 2px;
+    background: hsl(var(--primary));
+    border-radius: 2px;
+    box-shadow: 0 0 8px hsl(var(--primary) / 0.6);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+}
+
+/* Print Styles for Reports */
+@media print {
+  /* Reset background for print */
+  body {
+    background: white !important;
+    color: black !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide non-essential elements */
+  .print\\:hidden,
+  nav,
+  aside,
+  header,
+  footer,
+  button,
+  [data-sidebar],
+  .sidebar,
+  [role="navigation"] {
+    display: none !important;
+  }
+
+  /* Show print-only elements */
+  .print\\:block {
+    display: block !important;
+  }
+
+  /* Report header styling */
+  .print\\:block h1,
+  .print\\:block h2 {
+    color: black !important;
+  }
+
+  .print\\:block img {
+    max-height: 80px !important;
+    width: auto !important;
+  }
+
+  /* Cards and content */
+  .card,
+  [class*="Card"] {
+    border: 1px solid #e5e7eb !important;
+    background: white !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  /* Charts */
+  .recharts-wrapper {
+    break-inside: avoid;
+  }
+
+  /* Tables */
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  th, td {
+    border: 1px solid #d1d5db !important;
+    padding: 8px !important;
+    text-align: left !important;
+    color: black !important;
+  }
+
+  th {
+    background-color: #f3f4f6 !important;
+    font-weight: 600 !important;
+  }
+
+  /* Text colors */
+  p, span, div, h1, h2, h3, h4, h5, h6 {
+    color: black !important;
+  }
+
+  .text-muted-foreground {
+    color: #6b7280 !important;
+  }
+
+  /* Page breaks */
+  .page-break {
+    page-break-before: always;
+  }
+
+  /* Margins */
+  @page {
+    margin: 1cm;
+  }
+}
