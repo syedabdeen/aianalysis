@@ -10,6 +10,7 @@ import AnalyzerHome from "./pages/analyzer/AnalyzerHome";
 import MarketAnalysisPage from "./pages/analyzer/MarketAnalysisPage";
 import OfferAnalysisPage from "./pages/analyzer/OfferAnalysisPage";
 import AnalyzerSettings from "./pages/analyzer/AnalyzerSettings";
+import ReportsPage from "./pages/analyzer/ReportsPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -26,6 +27,7 @@ const App = () => (
               <Route path="/" element={<AnalyzerHome />} />
               <Route path="/market-analysis" element={<MarketAnalysisPage />} />
               <Route path="/offer-analysis" element={<OfferAnalysisPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
               <Route path="/settings" element={<AnalyzerSettings />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
