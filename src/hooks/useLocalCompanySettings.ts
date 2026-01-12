@@ -13,6 +13,7 @@ export interface LocalCompanySettings {
   default_currency: string;
   region: string;
   country: string;
+  city: string;
 }
 
 const defaultSettings: LocalCompanySettings = {
@@ -26,8 +27,9 @@ const defaultSettings: LocalCompanySettings = {
   website: '',
   logo_url: '',
   default_currency: 'AED',
-  region: 'middle_east',
-  country: 'UAE',
+  region: 'gcc',
+  country: 'United Arab Emirates',
+  city: '',
 };
 
 const STORAGE_KEY = 'ai_analyzer_company_settings';

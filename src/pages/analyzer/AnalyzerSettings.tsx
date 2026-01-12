@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,13 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { useToast } from '@/hooks/use-toast';
 import { 
+  countries, 
+  getCitiesForCountry, 
+  getCurrencyForCountry, 
+  getRegionForCountry,
+  getAllCountryNames 
+} from '@/lib/countryData';
+import { 
   Building2, 
   Upload, 
   Save, 
@@ -16,46 +23,61 @@ import {
   Image as ImageIcon,
   X
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
-
-const currencies = [
-  { code: 'AED', name: 'UAE Dirham' },
-  { code: 'SAR', name: 'Saudi Riyal' },
-  { code: 'USD', name: 'US Dollar' },
-  { code: 'EUR', name: 'Euro' },
-  { code: 'GBP', name: 'British Pound' },
-  { code: 'QAR', name: 'Qatari Riyal' },
-  { code: 'KWD', name: 'Kuwaiti Dinar' },
-  { code: 'BHD', name: 'Bahraini Dinar' },
-  { code: 'OMR', name: 'Omani Rial' },
-];
-
-const regions = [
-  { code: 'middle_east', name: 'Middle East', nameAr: 'الشرق الأوسط' },
-  { code: 'gcc', name: 'GCC', nameAr: 'دول الخليج' },
-  { code: 'asia', name: 'Asia', nameAr: 'آسيا' },
-  { code: 'europe', name: 'Europe', nameAr: 'أوروبا' },
-  { code: 'north_america', name: 'North America', nameAr: 'أمريكا الشمالية' },
-  { code: 'global', name: 'Global', nameAr: 'عالمي' },
-];
 
 export default function AnalyzerSettings() {
-  const { language, isRTL } = useLanguage();
+  const { language } = useLanguage();
   const { settings, updateSettings, clearSettings, isLoaded } = useLocalCompanySettings();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState(settings);
   const [hasChanges, setHasChanges] = useState(false);
+  const [showCustomCity, setShowCustomCity] = useState(false);
+  const [availableCities, setAvailableCities] = useState<string[]>([]);
 
   // Sync form data when settings load
-  if (isLoaded && !hasChanges && JSON.stringify(formData) !== JSON.stringify(settings)) {
-    setFormData(settings);
-  }
+  useEffect(() => {
+    if (isLoaded && !hasChanges) {
+      setFormData(settings);
+      // Check if current city is custom
+      const cities = getCitiesForCountry(settings.country);
+      setAvailableCities(cities);
+      if (settings.city && !cities.includes(settings.city)) {
+        setShowCustomCity(true);
+      }
+    }
+  }, [isLoaded, settings, hasChanges]);
 
   const handleChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     setHasChanges(true);
+  };
+
+  const handleCountryChange = (countryName: string) => {
+    const currency = getCurrencyForCountry(countryName);
+    const region = getRegionForCountry(countryName);
+    const cities = getCitiesForCountry(countryName);
+    
+    setFormData(prev => ({
+      ...prev,
+      country: countryName,
+      default_currency: currency?.code || prev.default_currency,
+      region: region,
+      city: '',
+    }));
+    setAvailableCities(cities);
+    setShowCustomCity(false);
+    setHasChanges(true);
+  };
+
+  const handleCityChange = (cityValue: string) => {
+    if (cityValue === '__other__') {
+      setShowCustomCity(true);
+      handleChange('city', '');
+    } else {
+      setShowCustomCity(false);
+      handleChange('city', cityValue);
+    }
   };
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +118,8 @@ export default function AnalyzerSettings() {
 
   const handleClear = () => {
     clearSettings();
+    const defaultCountry = 'United Arab Emirates';
+    const defaultCities = getCitiesForCountry(defaultCountry);
     setFormData({
       company_name_en: '',
       company_name_ar: '',
@@ -107,14 +131,26 @@ export default function AnalyzerSettings() {
       website: '',
       logo_url: '',
       default_currency: 'AED',
-      region: 'middle_east',
-      country: 'UAE',
+      region: 'gcc',
+      country: defaultCountry,
+      city: '',
     });
+    setAvailableCities(defaultCities);
+    setShowCustomCity(false);
     setHasChanges(false);
     toast({
       title: language === 'ar' ? 'تم المسح' : 'Cleared',
       description: language === 'ar' ? 'تم مسح جميع الإعدادات' : 'All settings cleared',
     });
+  };
+
+  // Get currency display text
+  const currencyDisplay = () => {
+    const country = countries.find(c => c.name === formData.country);
+    if (country) {
+      return `${country.currency} - ${country.currencyName}`;
+    }
+    return formData.default_currency;
   };
 
   return (
@@ -265,11 +301,77 @@ export default function AnalyzerSettings() {
               </div>
               <div className="space-y-2">
                 <Label>{language === 'ar' ? 'الدولة' : 'Country'}</Label>
-                <Input
+                <Select
                   value={formData.country}
-                  onChange={(e) => handleChange('country', e.target.value)}
-                  placeholder="UAE"
+                  onValueChange={handleCountryChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={language === 'ar' ? 'اختر الدولة' : 'Select country'} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {getAllCountryNames().map((countryName) => (
+                      <SelectItem key={countryName} value={countryName}>
+                        {countryName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>{language === 'ar' ? 'المدينة' : 'City'}</Label>
+                {showCustomCity ? (
+                  <div className="flex gap-2">
+                    <Input
+                      value={formData.city}
+                      onChange={(e) => handleChange('city', e.target.value)}
+                      placeholder={language === 'ar' ? 'أدخل اسم المدينة' : 'Enter city name'}
+                      className="flex-1"
+                    />
+                    <Button 
+                      variant="outline" 
+                      size="icon"
+                      onClick={() => {
+                        setShowCustomCity(false);
+                        handleChange('city', '');
+                      }}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Select
+                    value={formData.city}
+                    onValueChange={handleCityChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={language === 'ar' ? 'اختر المدينة' : 'Select city'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableCities.map((city) => (
+                        <SelectItem key={city} value={city}>
+                          {city}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="__other__" className="text-muted-foreground border-t">
+                        {language === 'ar' ? '— أخرى (إدخال يدوي) —' : '— Other (enter manually) —'}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>{language === 'ar' ? 'العملة' : 'Currency'}</Label>
+                <Input
+                  value={currencyDisplay()}
+                  disabled
+                  className="bg-muted"
                 />
+                <p className="text-xs text-muted-foreground">
+                  {language === 'ar' ? 'يتم تحديدها تلقائياً بناءً على الدولة' : 'Auto-set based on country'}
+                </p>
               </div>
             </div>
 
@@ -298,45 +400,6 @@ export default function AnalyzerSettings() {
                   onChange={(e) => handleChange('website', e.target.value)}
                   placeholder="www.company.com"
                 />
-              </div>
-            </div>
-
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{language === 'ar' ? 'العملة الافتراضية' : 'Default Currency'}</Label>
-                <Select
-                  value={formData.default_currency}
-                  onValueChange={(value) => handleChange('default_currency', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {currencies.map((c) => (
-                      <SelectItem key={c.code} value={c.code}>
-                        {c.code} - {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>{language === 'ar' ? 'المنطقة' : 'Region'}</Label>
-                <Select
-                  value={formData.region}
-                  onValueChange={(value) => handleChange('region', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {regions.map((r) => (
-                      <SelectItem key={r.code} value={r.code}>
-                        {language === 'ar' ? r.nameAr : r.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
               </div>
             </div>
           </CardContent>
