@@ -306,16 +306,16 @@ export default function MarketAnalysisPage() {
     csv += '\n';
 
     csv += 'Manufacturers\n';
-    csv += 'Name,Country,Email,Phone,Type\n';
+    csv += 'Name,Country,Email,Phone,Website,Address,Type\n';
     analysis.manufacturers.forEach(m => {
-      csv += `"${m.name}","${m.country}","${m.email || ''}","${m.phone || ''}","${m.isRegional ? 'Regional' : 'Global'}"\n`;
+      csv += `"${m.name}","${m.country}","${m.email || ''}","${m.phone || ''}","${m.website || ''}","${m.address || ''}","${m.isRegional ? 'Regional' : 'Global'}"\n`;
     });
     csv += '\n';
 
     csv += 'Suppliers\n';
-    csv += 'Name,City,Contact Person,Email,Phone,Type\n';
+    csv += 'Name,City,Contact Person,Email,Phone,Address,Type\n';
     analysis.suppliers.forEach(s => {
-      csv += `"${s.name}","${s.city}","${s.contactPerson || ''}","${s.email || ''}","${s.phone || ''}","${s.isLocal ? 'Local' : 'Regional'}"\n`;
+      csv += `"${s.name}","${s.city}","${s.contactPerson || ''}","${s.email || ''}","${s.phone || ''}","${s.address || ''}","${s.isLocal ? 'Local' : 'Regional'}"\n`;
     });
     csv += '\n';
 
@@ -417,14 +417,16 @@ export default function MarketAnalysisPage() {
           <h2>Manufacturers (${analysis.manufacturers.length})</h2>
           <table>
             <thead>
-              <tr><th>Name</th><th>Country</th><th>Contact</th><th>Type</th></tr>
+              <tr><th>Name</th><th>Country</th><th>Email</th><th>Phone</th><th>Website</th><th>Type</th></tr>
             </thead>
             <tbody>
               ${analysis.manufacturers.map(m => `
                 <tr>
                   <td>${m.name}</td>
                   <td>${m.country}</td>
-                  <td>${m.email || m.phone || 'N/A'}</td>
+                  <td>${m.email || 'N/A'}</td>
+                  <td>${m.phone || 'N/A'}</td>
+                  <td>${m.website ? `<a href="${m.website}" target="_blank">${m.website}</a>` : 'N/A'}</td>
                   <td>${m.isRegional ? 'Regional' : 'Global'}</td>
                 </tr>
               `).join('')}
@@ -436,14 +438,16 @@ export default function MarketAnalysisPage() {
           <h2>Suppliers (${analysis.suppliers.length})</h2>
           <table>
             <thead>
-              <tr><th>Name</th><th>City</th><th>Contact</th><th>Type</th></tr>
+              <tr><th>Name</th><th>City</th><th>Contact Person</th><th>Email</th><th>Phone</th><th>Type</th></tr>
             </thead>
             <tbody>
               ${analysis.suppliers.map(s => `
                 <tr>
                   <td>${s.name}</td>
                   <td>${s.city}</td>
-                  <td>${s.contactPerson || s.phone || 'N/A'}</td>
+                  <td>${s.contactPerson || 'N/A'}</td>
+                  <td>${s.email || 'N/A'}</td>
+                  <td>${s.phone || 'N/A'}</td>
                   <td>${s.isLocal ? 'Local' : 'Regional'}</td>
                 </tr>
               `).join('')}
