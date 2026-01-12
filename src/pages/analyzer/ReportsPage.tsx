@@ -58,18 +58,18 @@ export default function ReportsPage() {
   const generateMarketPDFHTML = (report: StoredReport) => {
     const analysis = report.analysisData;
     return `<!DOCTYPE html><html><head><title>Market Analysis - ${report.sequenceNumber}</title>
-      <style>body{font-family:Arial;padding:40px;max-width:900px;margin:0 auto}.header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #333;padding-bottom:20px;margin-bottom:30px}.logo{max-height:60px}h1{color:#1a365d}h2{color:#2d3748;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-top:30px}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #e2e8f0;padding:10px;text-align:left}th{background:#f7fafc}.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;background:#e2e8f0}.recommendation{background:#ebf8ff;border-left:4px solid #3182ce;padding:15px;margin-top:20px}</style></head>
+      <style>body{font-family:Arial;padding:40px;max-width:1100px;margin:0 auto}.header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #333;padding-bottom:20px;margin-bottom:30px}.logo{max-height:60px}h1{color:#1a365d}h2{color:#2d3748;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-top:30px}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:11px}th,td{border:1px solid #e2e8f0;padding:8px;text-align:left}th{background:#f7fafc}.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;background:#e2e8f0}.recommendation{background:#ebf8ff;border-left:4px solid #3182ce;padding:15px;margin-top:20px}a{color:#3182ce;text-decoration:none}</style></head>
       <body><div class="header"><div>${settings.logo_url?`<img src="${settings.logo_url}" class="logo"/>`:''}<h1>${settings.company_name_en||'Company'}</h1></div><div style="text-align:right"><p>${settings.address_en||''}</p><p>${settings.phone||''}</p></div></div>
       <h1 style="text-align:center">Market Analysis Report</h1>
       <p style="text-align:center;color:#718096">Reference: ${report.sequenceNumber} | Generated: ${new Date(report.createdAt).toLocaleDateString()}</p>
       <h2>Product: ${analysis?.product?.name || report.title}</h2>
       <p>${analysis?.product?.description || ''}</p>
       <h2>Manufacturers (${analysis?.manufacturers?.length || 0})</h2>
-      <table><thead><tr><th>Name</th><th>Country</th><th>Contact</th><th>Type</th></tr></thead>
-      <tbody>${analysis?.manufacturers?.map((m:any)=>`<tr><td>${m.name}</td><td>${m.country}</td><td>${m.email||m.phone||'N/A'}</td><td>${m.isRegional?'Regional':'Global'}</td></tr>`).join('')||''}</tbody></table>
+      <table><thead><tr><th>Name</th><th>Country</th><th>Email</th><th>Phone</th><th>Website</th><th>Type</th></tr></thead>
+      <tbody>${analysis?.manufacturers?.map((m:any)=>`<tr><td>${m.name}</td><td>${m.country}</td><td>${m.email||'N/A'}</td><td>${m.phone||'N/A'}</td><td>${m.website?`<a href="${m.website}">${m.website}</a>`:'N/A'}</td><td>${m.isRegional?'Regional':'Global'}</td></tr>`).join('')||''}</tbody></table>
       <h2>Suppliers (${analysis?.suppliers?.length || 0})</h2>
-      <table><thead><tr><th>Name</th><th>City</th><th>Contact</th><th>Type</th></tr></thead>
-      <tbody>${analysis?.suppliers?.map((s:any)=>`<tr><td>${s.name}</td><td>${s.city}</td><td>${s.contactPerson||s.phone||'N/A'}</td><td>${s.isLocal?'Local':'Regional'}</td></tr>`).join('')||''}</tbody></table>
+      <table><thead><tr><th>Name</th><th>City</th><th>Contact Person</th><th>Email</th><th>Phone</th><th>Type</th></tr></thead>
+      <tbody>${analysis?.suppliers?.map((s:any)=>`<tr><td>${s.name}</td><td>${s.city}</td><td>${s.contactPerson||'N/A'}</td><td>${s.email||'N/A'}</td><td>${s.phone||'N/A'}</td><td>${s.isLocal?'Local':'Regional'}</td></tr>`).join('')||''}</tbody></table>
       ${analysis?.marketSummary ? `<div class="recommendation"><strong>Recommendation:</strong><br/>${analysis.marketSummary.recommendation}</div>` : ''}
       </body></html>`;
   };
@@ -115,13 +115,13 @@ export default function ReportsPage() {
       csv = `Market Analysis Report - ${report.sequenceNumber}\n\n`;
       csv += `Product Name,${analysis?.product?.name || ''}\n`;
       csv += `Category,${analysis?.product?.category || ''}\n\n`;
-      csv += 'Manufacturers\nName,Country,Email,Phone,Type\n';
+      csv += 'Manufacturers\nName,Country,Email,Phone,Website,Address,Type\n';
       analysis?.manufacturers?.forEach((m:any) => {
-        csv += `"${m.name}","${m.country}","${m.email||''}","${m.phone||''}","${m.isRegional?'Regional':'Global'}"\n`;
+        csv += `"${m.name}","${m.country}","${m.email||''}","${m.phone||''}","${m.website||''}","${m.address||''}","${m.isRegional?'Regional':'Global'}"\n`;
       });
-      csv += '\nSuppliers\nName,City,Contact,Email,Type\n';
+      csv += '\nSuppliers\nName,City,Contact Person,Email,Phone,Address,Type\n';
       analysis?.suppliers?.forEach((s:any) => {
-        csv += `"${s.name}","${s.city}","${s.contactPerson||''}","${s.email||''}","${s.isLocal?'Local':'Regional'}"\n`;
+        csv += `"${s.name}","${s.city}","${s.contactPerson||''}","${s.email||''}","${s.phone||''}","${s.address||''}","${s.isLocal?'Local':'Regional'}"\n`;
       });
     } else {
       csv = `Offer Analysis Report - ${report.sequenceNumber}\n\nCommercial Comparison\n`;
