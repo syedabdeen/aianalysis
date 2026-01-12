@@ -3,7 +3,7 @@ import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
-import { Settings, Sparkles, Languages, FileText } from 'lucide-react';
+import { Settings, Sparkles, Languages, FileText, Home } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function AnalyzerHeader() {
@@ -65,6 +65,19 @@ export function AnalyzerHeader() {
         </Link>
 
         <nav className="hidden md:flex items-center gap-1">
+          <Link to="/">
+            <Button
+              variant={location.pathname === '/' ? 'default' : 'ghost'}
+              size="sm"
+              className={cn(
+                'transition-all gap-1',
+                location.pathname === '/' && 'bg-primary/90'
+              )}
+            >
+              <Home className="h-4 w-4" />
+              {language === 'ar' ? 'الرئيسية' : 'Home'}
+            </Button>
+          </Link>
           <Link to="/market-analysis">
             <Button
               variant={location.pathname === '/market-analysis' ? 'default' : 'ghost'}
