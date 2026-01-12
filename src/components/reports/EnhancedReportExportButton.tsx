@@ -272,6 +272,16 @@ export function EnhancedReportExportButton({
     }
   };
 
+  const loadImageForPDF = (url: string): Promise<HTMLImageElement | null> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  };
+
   const downloadPDF = async () => {
     if (!data) {
       toast.error(language === 'ar' ? 'لا توجد بيانات للتصدير' : 'No data to export');
@@ -284,24 +294,41 @@ export function EnhancedReportExportButton({
     try {
       const doc = new jsPDF('p', 'mm', 'a4');
       const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 15;
       let yPos = 15;
       
+      // ===== HEADER WITH LOGO =====
+      let logoOffset = 0;
+      if (companySettings?.logo_url) {
+        try {
+          const logoImg = await loadImageForPDF(companySettings.logo_url);
+          if (logoImg) {
+            doc.addImage(logoImg, 'JPEG', margin, yPos - 5, 25, 15);
+            logoOffset = 30;
+          }
+        } catch (error) {
+          console.warn('Failed to load logo:', error);
+        }
+      }
+
       // Company Header
       doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
-      doc.text(companySettings?.company_name_en || 'Company Report', pageWidth / 2, yPos, { align: 'center' });
+      const companyNameX = logoOffset > 0 ? margin + logoOffset : pageWidth / 2;
+      const companyNameAlign = logoOffset > 0 ? undefined : 'center' as const;
+      doc.text(companySettings?.company_name_en || 'Company Report', companyNameX, yPos, companyNameAlign ? { align: companyNameAlign } : undefined);
       yPos += 8;
       
       if (companySettings?.address_en) {
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
-        doc.text(companySettings.address_en, pageWidth / 2, yPos, { align: 'center' });
+        doc.text(companySettings.address_en, companyNameX, yPos, companyNameAlign ? { align: companyNameAlign } : undefined);
         yPos += 5;
       }
       
       if (companySettings?.trade_license_number) {
         doc.setFontSize(9);
-        doc.text(`Trade License: ${companySettings.trade_license_number}`, pageWidth / 2, yPos, { align: 'center' });
+        doc.text(`Trade License: ${companySettings.trade_license_number}`, companyNameX, yPos, companyNameAlign ? { align: companyNameAlign } : undefined);
         yPos += 5;
       }
       
