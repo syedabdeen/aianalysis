@@ -128,13 +128,20 @@ Return ONLY this JSON structure:
           content: `${extractionPrompt}\n\nDocument "${file.name}":\n${file.text.substring(0, 80000)}`
         });
       } else if (file.data) {
-        // Process full PDF data - increased limit for better extraction
-        // For base64 PDFs, use up to 500KB to capture more content
-        const dataToUse = file.data.length > 500000 ? file.data.substring(0, 500000) : file.data;
-        console.log(`Processing ${file.name}: ${(dataToUse.length / 1024).toFixed(1)}KB of data`);
+        // For PDFs and other binary files, use image_url format for vision AI
+        // This is the same approach used in extract-company-document
+        const dataUrl = file.data.startsWith('data:') 
+          ? file.data 
+          : `data:application/pdf;base64,${file.data}`;
+        
+        console.log(`Processing ${file.name}: ${(file.data.length / 1024).toFixed(1)}KB using vision mode`);
+        
         messages.push({
           role: 'user',
-          content: `${extractionPrompt}\n\nDocument "${file.name}" (base64 PDF):\n${dataToUse}`
+          content: [
+            { type: 'text', text: extractionPrompt },
+            { type: 'image_url', image_url: { url: dataUrl } }
+          ]
         });
       } else {
         console.error(`No content available for ${file.name}`);
