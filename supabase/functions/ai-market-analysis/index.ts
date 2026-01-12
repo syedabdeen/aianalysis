@@ -5,6 +5,19 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Helper function to get countries for each region
+const getRegionCountries = (region: string): string => {
+  const regionMap: Record<string, string> = {
+    'middle_east': 'UAE, Saudi Arabia, Qatar, Kuwait, Bahrain, Oman, Jordan, Lebanon, Egypt, Iraq',
+    'gcc': 'UAE, Saudi Arabia, Qatar, Kuwait, Bahrain, Oman',
+    'asia': 'China, India, Japan, South Korea, Singapore, Malaysia, Thailand, Vietnam, Indonesia, Philippines, Taiwan',
+    'europe': 'Germany, UK, France, Italy, Spain, Netherlands, Belgium, Switzerland, Austria, Poland, Sweden',
+    'north_america': 'USA, Canada, Mexico',
+    'global': 'any country worldwide'
+  };
+  return regionMap[region] || regionMap['middle_east'];
+};
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -38,15 +51,19 @@ serve(async (req) => {
 
     console.log(`Analyzing product for region: ${region}, country: ${country}`);
 
-    // Build the analysis prompt
+    const regionCountries = getRegionCountries(region);
+
+    // Build the analysis prompt with clear global vs regional scope
     const analysisPrompt = `You are an expert industrial product analyst and market researcher. Analyze the product and provide comprehensive market intelligence.
 
 ${inputType === 'text' ? `Product Description: ${textDescription}` : 'Product image provided.'}
 ${technicalSpecs ? `Additional Technical Specifications: ${technicalSpecs}` : ''}
 
-Company Region: ${region}
-Company Country: ${country}
-Currency: ${currency}
+**REGION CONTEXT:**
+- Target Region: ${region}
+- Target Country: ${country}
+- Currency for pricing: ${currency}
+- Regional Countries: ${regionCountries}
 
 Provide a detailed analysis in the following JSON format:
 {
@@ -70,12 +87,12 @@ Provide a detailed analysis in the following JSON format:
       "address": "Full street address with city and postal code",
       "website": "https://www.example.com",
       "email": "sales@example.com",
-      "phone": "+971 4 XXX XXXX",
-      "mobile": "+971 50 XXX XXXX",
+      "phone": "+XX X XXX XXXX",
+      "mobile": "+XX XX XXX XXXX",
       "salesPerson": "John Smith / Sales Manager",
       "department": "Sales Department",
       "rating": 4.5,
-      "isRegional": true
+      "isRegional": false
     }
   ],
   "suppliers": [
@@ -85,8 +102,8 @@ Provide a detailed analysis in the following JSON format:
       "address": "Full street address with building name, area, city",
       "website": "https://www.supplier.com",
       "email": "info@supplier.com",
-      "phone": "+971 4 XXX XXXX",
-      "mobile": "+971 55 XXX XXXX",
+      "phone": "+XX X XXX XXXX",
+      "mobile": "+XX XX XXX XXXX",
       "salesPerson": "Ahmed Hassan / Account Manager",
       "contactPerson": "Main contact name",
       "department": "Sales / Procurement",
@@ -102,15 +119,35 @@ Provide a detailed analysis in the following JSON format:
   }
 }
 
-CRITICAL REQUIREMENTS:
-1. Include at least 4-6 REAL global manufacturers with ACTUAL contact details (prioritize those with offices in ${region})
-2. Include at least 4-6 REAL local/regional suppliers and distributors in ${country} or nearby GCC countries
-3. Provide REALISTIC price ranges in ${currency} based on market rates
-4. Include REAL company information - actual websites, phone numbers, emails that exist
-5. Include sales contact person names where possible (use typical regional names)
-6. Include both office phone and mobile numbers where available
-7. Flag manufacturers and suppliers that are regional/local with isRegional/isLocal = true
-8. For ${region} region, prioritize suppliers from UAE, Saudi Arabia, Qatar, Kuwait, Bahrain, Oman`;
+**CRITICAL REQUIREMENTS:**
+
+**MANUFACTURERS (GLOBAL SCOPE - SEARCH WORLDWIDE):**
+1. Include 4-6 REAL manufacturers from ANYWHERE IN THE WORLD
+2. Prioritize well-known global brands and OEMs (Original Equipment Manufacturers)
+3. Include manufacturers from different regions: Europe, Asia, North America, etc.
+4. Provide ACTUAL contact details, websites, and phone numbers
+5. Include regional sales offices if they have presence in ${region}
+6. Set isRegional = true ONLY if they have an office in ${region}, otherwise false
+
+**SUPPLIERS (REGION-RESTRICTED - ${region.toUpperCase()} ONLY):**
+1. Include 4-6 REAL suppliers/distributors ONLY from: ${regionCountries}
+2. DO NOT include suppliers from outside ${region}
+3. Focus on authorized distributors, trading companies, and local stockists
+4. Prioritize suppliers in ${country} first, then nearby countries within ${region}
+5. All suppliers MUST be physically located within ${region}
+6. Set isLocal = true for all suppliers
+7. Include REAL company information - actual websites, phone numbers, emails
+
+**PRICING & AVAILABILITY (REGION-SPECIFIC):**
+1. Provide price ranges in ${currency} based on ${region} market rates
+2. Consider local import duties and logistics for ${country}
+3. Lead times should reflect shipping to ${country}
+4. Availability status based on local stock levels in ${region}
+
+**GENERAL:**
+- Include REAL company information - actual websites, phone numbers, emails
+- Include sales contact person names where possible
+- Include both office phone and mobile numbers where available`;
 
     const messages: any[] = [
       { role: 'system', content: 'You are an expert industrial product analyst with deep knowledge of global manufacturing and regional supply chains.' },
