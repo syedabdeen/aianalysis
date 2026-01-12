@@ -3,6 +3,7 @@ import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { 
   Globe, 
   FileSpreadsheet, 
@@ -19,6 +20,12 @@ import { cn } from '@/lib/utils';
 
 export default function AnalyzerHome() {
   const { language, isRTL } = useLanguage();
+  const { settings } = useLocalCompanySettings();
+
+  const hasCompanyName = settings.company_name_en || settings.company_name_ar;
+  const displayName = language === 'ar' 
+    ? (settings.company_name_ar || settings.company_name_en) 
+    : settings.company_name_en;
 
   const tools = [
     {
@@ -59,15 +66,43 @@ export default function AnalyzerHome() {
         {/* Hero Section */}
         <section className="text-center py-12 relative">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/5 to-primary/5 rounded-3xl -z-10" />
-          <div className="relative inline-flex items-center justify-center mb-6">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center animate-float">
-              <Sparkles className="w-10 h-10 text-primary-foreground" />
+          
+          {/* Company Logo */}
+          {settings.logo_url && (
+            <div className="flex justify-center mb-6">
+              <img 
+                src={settings.logo_url} 
+                alt="Company Logo" 
+                className="h-20 object-contain"
+              />
             </div>
-            <div className="absolute -inset-4 bg-gradient-to-br from-primary/20 to-accent/20 rounded-3xl blur-2xl -z-10 animate-glow" />
-          </div>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 gradient-text-blue">
-            {language === 'ar' ? 'أداة التحليل الذكي' : 'AI Analyzer'}
-          </h1>
+          )}
+          
+          {!settings.logo_url && (
+            <div className="relative inline-flex items-center justify-center mb-6">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center animate-float">
+                <Sparkles className="w-10 h-10 text-primary-foreground" />
+              </div>
+              <div className="absolute -inset-4 bg-gradient-to-br from-primary/20 to-accent/20 rounded-3xl blur-2xl -z-10 animate-glow" />
+            </div>
+          )}
+          
+          {/* Company Name or App Name */}
+          {hasCompanyName ? (
+            <>
+              <h1 className="text-4xl md:text-5xl font-bold mb-2">
+                {displayName}
+              </h1>
+              <p className="text-xl text-primary font-medium mb-4">
+                {language === 'ar' ? 'مدعوم بمحلل الذكاء الاصطناعي' : 'Powered by AI Analyzer'}
+              </p>
+            </>
+          ) : (
+            <h1 className="text-4xl md:text-5xl font-bold mb-4 gradient-text-blue">
+              {language === 'ar' ? 'أداة التحليل الذكي' : 'AI Analyzer'}
+            </h1>
+          )}
+          
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             {language === 'ar'
               ? 'أدوات تحليل قوية مدعومة بالذكاء الاصطناعي لأبحاث السوق ومقارنة عروض الأسعار'

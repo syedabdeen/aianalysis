@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
+import { useAnalysisReports } from '@/hooks/useAnalysisReports';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -9,6 +10,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { 
@@ -34,7 +45,8 @@ import {
   TrendingUp,
   Smartphone,
   User,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Save
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -90,6 +102,7 @@ interface ProductAnalysis {
 export default function MarketAnalysisPage() {
   const { language, isRTL } = useLanguage();
   const { settings } = useLocalCompanySettings();
+  const { saveReport } = useAnalysisReports();
   const { toast } = useToast();
 
   const [inputType, setInputType] = useState<'text' | 'image'>('text');
@@ -101,6 +114,8 @@ export default function MarketAnalysisPage() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [analysis, setAnalysis] = useState<ProductAnalysis | null>(null);
   const [activeTab, setActiveTab] = useState('input');
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -174,6 +189,8 @@ export default function MarketAnalysisPage() {
       setAnalysis(data.analysis);
       setAnalysisProgress(100);
       setActiveTab('product');
+      setIsSaved(false);
+      setShowSaveDialog(true);
 
       toast({
         title: language === 'ar' ? 'تم التحليل بنجاح' : 'Analysis Complete',
@@ -192,6 +209,29 @@ export default function MarketAnalysisPage() {
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const handleSaveReport = () => {
+    if (!analysis) return;
+    
+    const manufacturers = analysis.manufacturers?.length || 0;
+    const suppliers = analysis.suppliers?.length || 0;
+    const inputSummary = `${manufacturers} Manufacturers, ${suppliers} Suppliers`;
+    
+    const saved = saveReport(
+      'market',
+      analysis.product?.name || textInput || 'Market Analysis',
+      analysis,
+      inputSummary
+    );
+    
+    setIsSaved(true);
+    setShowSaveDialog(false);
+    
+    toast({
+      title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
+      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
+    });
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
@@ -458,13 +498,19 @@ export default function MarketAnalysisPage() {
           </div>
           {analysis && (
             <div className="flex gap-2">
+              {!isSaved && (
+                <Button onClick={handleSaveReport} variant="outline" className="gap-2">
+                  <Save className="h-4 w-4" />
+                  {language === 'ar' ? 'حفظ' : 'Save'}
+                </Button>
+              )}
               <Button onClick={downloadExcel} variant="outline" className="gap-2">
                 <FileSpreadsheet className="h-4 w-4" />
-                {language === 'ar' ? 'Excel' : 'Excel'}
+                Excel
               </Button>
               <Button onClick={downloadPDF} className="gap-2">
                 <Download className="h-4 w-4" />
-                {language === 'ar' ? 'PDF' : 'PDF'}
+                PDF
               </Button>
             </div>
           )}

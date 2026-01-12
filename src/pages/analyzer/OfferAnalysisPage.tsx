@@ -2,18 +2,18 @@ import React, { useState, useCallback } from 'react';
 import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
+import { useAnalysisReports } from '@/hooks/useAnalysisReports';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { 
   Upload, FileText, X, Sparkles, Download, FileSpreadsheet,
   Award, AlertTriangle, CheckCircle, TrendingUp, DollarSign,
-  Clock, Shield, Loader2, Eye
+  Clock, Shield, Loader2, Save
 } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
@@ -36,6 +36,7 @@ interface AnalysisResult {
 export default function OfferAnalysisPage() {
   const { language } = useLanguage();
   const { settings } = useLocalCompanySettings();
+  const { saveReport } = useAnalysisReports();
   const { toast } = useToast();
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -44,6 +45,7 @@ export default function OfferAnalysisPage() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [activeTab, setActiveTab] = useState('upload');
   const [dragActive, setDragActive] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -104,12 +106,33 @@ export default function OfferAnalysisPage() {
       setAnalysisResult(data.analysis);
       setAnalysisProgress(100);
       setActiveTab('technical');
+      setIsSaved(false);
       toast({ title: 'Analysis Complete', description: 'All quotations analyzed successfully' });
     } catch (error: any) {
       toast({ title: 'Analysis Error', description: error.message || 'Failed to analyze', variant: 'destructive' });
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const handleSaveReport = () => {
+    if (!analysisResult) return;
+    
+    const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
+    const inputSummary = `${suppliers.length} Vendors compared`;
+    
+    const saved = saveReport(
+      'offer',
+      analysisResult.summary?.bestValue || 'Offer Analysis',
+      analysisResult,
+      inputSummary
+    );
+    
+    setIsSaved(true);
+    toast({
+      title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
+      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
+    });
   };
 
   const downloadPDF = () => {
@@ -164,6 +187,12 @@ export default function OfferAnalysisPage() {
           </div>
           {analysisResult && (
             <div className="flex gap-2">
+              {!isSaved && (
+                <Button onClick={handleSaveReport} variant="outline" className="gap-2">
+                  <Save className="h-4 w-4" />
+                  {language === 'ar' ? 'حفظ' : 'Save'}
+                </Button>
+              )}
               <Button onClick={downloadExcel} variant="outline"><FileSpreadsheet className="h-4 w-4 mr-2" />Excel</Button>
               <Button onClick={downloadPDF}><Download className="h-4 w-4 mr-2" />PDF</Button>
             </div>

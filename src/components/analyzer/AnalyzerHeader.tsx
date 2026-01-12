@@ -2,34 +2,65 @@ import { Link, useLocation } from 'react-router-dom';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { Settings, Sparkles, Languages } from 'lucide-react';
+import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
+import { Settings, Sparkles, Languages, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function AnalyzerHeader() {
   const { language, setLanguage, isRTL } = useLanguage();
+  const { settings } = useLocalCompanySettings();
   const location = useLocation();
 
   const toggleLanguage = () => {
     setLanguage(language === 'en' ? 'ar' : 'en');
   };
 
+  const hasCompanyName = settings.company_name_en || settings.company_name_ar;
+  const displayName = language === 'ar' 
+    ? (settings.company_name_ar || settings.company_name_en) 
+    : settings.company_name_en;
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/80 backdrop-blur-xl">
       <div className="container flex h-16 items-center justify-between px-4 mx-auto max-w-7xl">
         <Link to="/" className="flex items-center gap-3">
-          <div className="relative">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-              <Sparkles className="w-6 h-6 text-primary-foreground" />
+          {/* Logo */}
+          {settings.logo_url ? (
+            <img 
+              src={settings.logo_url} 
+              alt="Company Logo" 
+              className="w-10 h-10 rounded-xl object-contain bg-white"
+            />
+          ) : (
+            <div className="relative">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+                <Sparkles className="w-6 h-6 text-primary-foreground" />
+              </div>
+              <div className="absolute -inset-1 bg-gradient-to-br from-primary/20 to-accent/20 rounded-xl blur-lg -z-10" />
             </div>
-            <div className="absolute -inset-1 bg-gradient-to-br from-primary/20 to-accent/20 rounded-xl blur-lg -z-10" />
-          </div>
+          )}
+          
+          {/* Company Name / App Name */}
           <div className="flex flex-col">
-            <span className="font-bold text-xl tracking-tight gradient-text-blue">
-              AI Analyzer
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {language === 'ar' ? 'أدوات تحليل ذكية' : 'Smart Analysis Tools'}
-            </span>
+            {hasCompanyName ? (
+              <>
+                <span className="font-bold text-xl tracking-tight">
+                  {displayName}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {language === 'ar' ? 'محلل الذكاء الاصطناعي' : 'AI Analyzer'}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="font-bold text-xl tracking-tight gradient-text-blue">
+                  AI Analyzer
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {language === 'ar' ? 'أدوات تحليل ذكية' : 'Smart Analysis Tools'}
+                </span>
+              </>
+            )}
           </div>
         </Link>
 
@@ -56,6 +87,19 @@ export function AnalyzerHeader() {
               )}
             >
               {language === 'ar' ? 'تحليل العروض' : 'Offer Analysis'}
+            </Button>
+          </Link>
+          <Link to="/reports">
+            <Button
+              variant={location.pathname === '/reports' ? 'default' : 'ghost'}
+              size="sm"
+              className={cn(
+                'transition-all gap-1',
+                location.pathname === '/reports' && 'bg-primary/90'
+              )}
+            >
+              <FileText className="h-4 w-4" />
+              {language === 'ar' ? 'التقارير' : 'Reports'}
             </Button>
           </Link>
         </nav>
