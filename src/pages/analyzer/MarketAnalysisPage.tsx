@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
@@ -46,7 +47,9 @@ import {
   Smartphone,
   User,
   FileSpreadsheet,
-  Save
+  Save,
+  ArrowLeft,
+  Eye
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -104,6 +107,11 @@ export default function MarketAnalysisPage() {
   const { settings } = useLocalCompanySettings();
   const { saveReport } = useAnalysisReports();
   const { toast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Check for view mode from navigation state
+  const viewReport = location.state?.viewReport;
 
   const [inputType, setInputType] = useState<'text' | 'image'>('text');
   const [textInput, setTextInput] = useState('');
@@ -116,6 +124,17 @@ export default function MarketAnalysisPage() {
   const [activeTab, setActiveTab] = useState('input');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [isViewMode, setIsViewMode] = useState(false);
+
+  // Handle viewing saved report
+  useEffect(() => {
+    if (viewReport?.analysisData) {
+      setAnalysis(viewReport.analysisData);
+      setActiveTab('product');
+      setIsViewMode(true);
+      setIsSaved(true);
+    }
+  }, [viewReport]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -477,9 +496,54 @@ export default function MarketAnalysisPage() {
     }
   };
 
+  const handleNewAnalysis = () => {
+    setAnalysis(null);
+    setIsViewMode(false);
+    setIsSaved(false);
+    setActiveTab('input');
+    setTextInput('');
+    setSpecsInput('');
+    setImageFile(null);
+    setImagePreview(null);
+    // Clear navigation state
+    window.history.replaceState({}, document.title);
+  };
+
   return (
     <AnalyzerLayout>
       <div className="space-y-6">
+        {/* View Mode Banner */}
+        {isViewMode && viewReport && (
+          <div className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
+                <Eye className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="bg-primary/20 text-primary">
+                    {viewReport.sequenceNumber}
+                  </Badge>
+                  <span className="font-medium">{viewReport.title}</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {language === 'ar' ? 'وضع العرض - التقرير المحفوظ' : 'View Mode - Saved Report'}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => navigate('/reports')} className="gap-2">
+                <ArrowLeft className={cn("h-4 w-4", isRTL && "rotate-180")} />
+                {language === 'ar' ? 'العودة للتقارير' : 'Back to Reports'}
+              </Button>
+              <Button variant="default" size="sm" onClick={handleNewAnalysis} className="gap-2">
+                <Sparkles className="h-4 w-4" />
+                {language === 'ar' ? 'تحليل جديد' : 'New Analysis'}
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
@@ -498,7 +562,7 @@ export default function MarketAnalysisPage() {
           </div>
           {analysis && (
             <div className="flex gap-2">
-              {!isSaved && (
+              {!isSaved && !isViewMode && (
                 <Button onClick={handleSaveReport} variant="outline" className="gap-2">
                   <Save className="h-4 w-4" />
                   {language === 'ar' ? 'حفظ' : 'Save'}
