@@ -139,7 +139,8 @@ Return ONLY a valid JSON object with this exact structure:
       ];
 
       // Handle different file types
-      if (file.type.includes('image') || file.data.startsWith('data:image')) {
+      if (file.type?.includes('image') || file.data?.startsWith('data:image')) {
+        // Image files - use vision API
         messages.push({
           role: 'user',
           content: [
@@ -147,12 +148,28 @@ Return ONLY a valid JSON object with this exact structure:
             { type: 'image_url', image_url: { url: file.data } }
           ]
         });
-      } else {
-        // For non-image files, extract text content
+      } else if (file.text) {
+        // Text content extracted client-side (e.g., from PDF)
         messages.push({
           role: 'user',
-          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${file.data}`
+          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${file.text}`
         });
+      } else if (file.data) {
+        // Base64 data - only use if it's not a massive payload
+        // For PDFs sent as base64, we can't process them well, so create placeholder
+        if (file.type?.includes('pdf') && file.data.length > 100000) {
+          console.warn(`PDF file ${file.name} sent as base64 is too large, using placeholder`);
+          extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
+          continue;
+        }
+        messages.push({
+          role: 'user',
+          content: `${extractionPrompt}\n\nDocument content from file "${file.name}":\n${file.data.substring(0, 50000)}`
+        });
+      } else {
+        console.warn(`No content available for ${file.name}`);
+        extractedQuotations.push(createPlaceholderQuotation(file.name, i + 1, companySettings));
+        continue;
       }
 
       try {
@@ -164,6 +181,7 @@ Return ONLY a valid JSON object with this exact structure:
           },
           body: JSON.stringify({
             model: 'google/gemini-2.5-flash',
+            max_completion_tokens: 4000,
             messages,
           }),
         });
