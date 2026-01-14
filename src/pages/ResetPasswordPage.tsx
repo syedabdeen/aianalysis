@@ -1,54 +1,33 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Eye, EyeOff, KeyRound, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, KeyRound, ArrowLeft, Loader2 } from 'lucide-react';
 
 const ResetPasswordPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get('token');
+  
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isValidSession, setIsValidSession] = useState<boolean | null>(null);
+  const [isValidToken, setIsValidToken] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session) {
-        setIsValidSession(true);
-      } else {
-        // Check if we have a recovery token in the URL hash
-        const hashParams = new URLSearchParams(window.location.hash.substring(1));
-        const accessToken = hashParams.get('access_token');
-        const type = hashParams.get('type');
-        
-        if (accessToken && type === 'recovery') {
-          // Set the session from the recovery token
-          const { error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: hashParams.get('refresh_token') || '',
-          });
-          
-          if (!error) {
-            setIsValidSession(true);
-            return;
-          }
-        }
-        
-        setIsValidSession(false);
-        toast.error('Reset link expired or invalid. Please request a new one.');
-      }
-    };
-
-    checkSession();
-  }, []);
+    // Check if we have a token in the URL
+    if (!token) {
+      setIsValidToken(false);
+    } else {
+      // Token exists, allow user to proceed
+      setIsValidToken(true);
+    }
+  }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,35 +42,52 @@ const ResetPasswordPage = () => {
       return;
     }
 
+    if (!token) {
+      toast.error('Invalid reset link');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/verify-reset-token`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, newPassword: password }),
+        }
+      );
 
-      if (error) {
-        toast.error(error.message);
-      } else {
+      const data = await response.json();
+
+      if (data.success) {
         toast.success('Password updated successfully! Please sign in with your new password.');
-        await supabase.auth.signOut();
         navigate('/login');
+      } else {
+        toast.error(data.error || 'Failed to update password');
+        if (data.error?.includes('expired') || data.error?.includes('Invalid')) {
+          setIsValidToken(false);
+        }
       }
     } catch (err) {
-      toast.error('Failed to update password');
+      console.error('Error resetting password:', err);
+      toast.error('Failed to update password. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   // Loading state
-  if (isValidSession === null) {
+  if (isValidToken === null) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  // Invalid session - show error and redirect option
-  if (isValidSession === false) {
+  // Invalid or missing token - show error and redirect option
+  if (isValidToken === false) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-muted p-4">
         <Card className="w-full max-w-md shadow-xl border-border/50">

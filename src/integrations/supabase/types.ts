@@ -955,6 +955,36 @@ export type Database = {
           },
         ]
       }
+      password_reset_tokens: {
+        Row: {
+          created_at: string | null
+          email: string
+          expires_at: string
+          id: string
+          token: string
+          used: boolean | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          email: string
+          expires_at: string
+          id?: string
+          token: string
+          used?: boolean | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          email?: string
+          expires_at?: string
+          id?: string
+          token?: string
+          used?: boolean | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       petty_cash_claims: {
         Row: {
           balance_remaining: number | null
@@ -3602,6 +3632,7 @@ export type Database = {
     }
     Functions: {
       check_trade_license_expiry: { Args: never; Returns: undefined }
+      cleanup_expired_reset_tokens: { Args: never; Returns: undefined }
       create_matrix_snapshot: {
         Args: { _change_summary?: string }
         Returns: string

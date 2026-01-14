@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Eye, EyeOff, LogIn, UserPlus } from 'lucide-react';
+import { Eye, EyeOff, LogIn, UserPlus, Loader2 } from 'lucide-react';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -84,27 +84,42 @@ const LoginPage = () => {
     }
   };
 
+  const [isSendingReset, setIsSendingReset] = useState(false);
+
   const handleForgotPassword = async () => {
     if (!email) {
       toast.error('Please enter your email address first');
       return;
     }
 
+    if (!email.includes('@')) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    setIsSendingReset(true);
     try {
-      const { error } = await import('@/integrations/supabase/client').then(
-        async ({ supabase }) => 
-          supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/reset-password`,
-          })
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-password-reset`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        }
       );
 
-      if (error) {
-        toast.error(error.message);
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success('Password reset email sent! Check your inbox.');
       } else {
-        toast.success('Password recovery email sent. Check your inbox.');
+        toast.error(data.error || 'Failed to send reset email');
       }
     } catch (err) {
-      toast.error('Failed to send recovery email');
+      console.error('Error sending reset email:', err);
+      toast.error('Failed to send recovery email. Please try again.');
+    } finally {
+      setIsSendingReset(false);
     }
   };
 
@@ -214,8 +229,10 @@ const LoginPage = () => {
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="text-sm text-primary hover:underline"
+                  disabled={isSendingReset}
+                  className="text-sm text-primary hover:underline disabled:opacity-50 flex items-center gap-1"
                 >
+                  {isSendingReset && <Loader2 className="h-3 w-3 animate-spin" />}
                   Forgot password?
                 </button>
               </div>
