@@ -17,10 +17,11 @@ interface ValidityGuardProps {
 }
 
 export const ValidityGuard = ({ children }: ValidityGuardProps) => {
-  const { user, loading, isValidityExpired, signOut } = useSimpleAuth();
+  const { user, loading, isValidityExpired, signOut, userExtended } = useSimpleAuth();
   const [showExpiredDialog, setShowExpiredDialog] = useState(true);
 
-  if (loading) {
+  // Show loading while user data is being fetched
+  if (loading || (user && !userExtended)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>

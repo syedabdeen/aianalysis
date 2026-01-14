@@ -7,6 +7,7 @@ import { useSimpleAuth } from '@/contexts/SimpleAuthContext';
 import { Settings, Sparkles, Languages, FileText, Home, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { TrialIndicator } from './TrialIndicator';
 
 export function AnalyzerHeader() {
   const { language, setLanguage, isRTL } = useLanguage();
@@ -132,6 +133,9 @@ export function AnalyzerHeader() {
         </nav>
 
         <div className="flex items-center gap-2">
+          {/* Trial indicator */}
+          {user && <TrialIndicator />}
+          
           {/* User info */}
           {user && (
             <span className="text-sm text-muted-foreground hidden lg:block max-w-[150px] truncate">

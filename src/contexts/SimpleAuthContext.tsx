@@ -20,6 +20,7 @@ interface SimpleAuthContextType {
   signOut: () => Promise<void>;
   isValidityExpired: () => boolean;
   refreshUserExtended: () => Promise<void>;
+  getTrialDaysRemaining: () => number | null;
 }
 
 const SimpleAuthContext = createContext<SimpleAuthContextType | undefined>(undefined);
@@ -131,8 +132,18 @@ export const SimpleAuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const isValidityExpired = () => {
-    if (!userExtended?.valid_until) return true;
+    // If no userExtended data yet, assume NOT expired (loading state)
+    if (!userExtended?.valid_until) return false;
     return new Date(userExtended.valid_until) < new Date();
+  };
+
+  const getTrialDaysRemaining = (): number | null => {
+    if (!userExtended?.valid_until) return null;
+    const validUntil = new Date(userExtended.valid_until);
+    const now = new Date();
+    const diffTime = validUntil.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.max(0, diffDays);
   };
 
   return (
@@ -147,6 +158,7 @@ export const SimpleAuthProvider = ({ children }: { children: ReactNode }) => {
         signOut,
         isValidityExpired,
         refreshUserExtended,
+        getTrialDaysRemaining,
       }}
     >
       {children}
