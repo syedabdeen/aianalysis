@@ -93,6 +93,19 @@ export const useUsersExtended = () => {
     }
   };
 
+  const resetPassword = async (userId: string, newPassword: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-users', {
+        body: { action: 'reset-password', userId, newPassword }
+      });
+
+      if (error) throw error;
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  };
+
   return {
     users,
     loading,
@@ -101,5 +114,6 @@ export const useUsersExtended = () => {
     updateUser,
     deleteUser,
     extendValidity,
+    resetPassword,
   };
 };

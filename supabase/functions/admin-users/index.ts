@@ -18,7 +18,7 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    const { action, userId, updates, daysToAdd, specificDate } = await req.json();
+    const { action, userId, updates, daysToAdd, specificDate, newPassword } = await req.json();
 
     switch (action) {
       case "list": {
@@ -109,6 +109,26 @@ serve(async (req) => {
         
         if (error) throw error;
         return new Response(JSON.stringify({ success: true, newValidUntil }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "reset-password": {
+        if (!userId) {
+          throw new Error("userId is required");
+        }
+        
+        const { newPassword } = await req.json().catch(() => ({}));
+        if (!newPassword || newPassword.length < 6) {
+          throw new Error("newPassword must be at least 6 characters");
+        }
+        
+        const { error } = await supabase.auth.admin.updateUserById(userId, {
+          password: newPassword
+        });
+        
+        if (error) throw error;
+        return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }

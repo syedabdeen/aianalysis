@@ -45,18 +45,22 @@ import {
   Users,
   Clock,
   CheckCircle,
-  XCircle
+  XCircle,
+  Key,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const AdminDashboardPage = () => {
   const navigate = useNavigate();
-  const { users, loading, fetchUsers, updateUser, deleteUser, extendValidity } = useUsersExtended();
+  const { users, loading, fetchUsers, updateUser, deleteUser, extendValidity, resetPassword } = useUsersExtended();
   
   const [selectedUser, setSelectedUser] = useState<UserExtended | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [extendDialogOpen, setExtendDialogOpen] = useState(false);
+  const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   
   // Edit form state
   const [editEmail, setEditEmail] = useState('');
@@ -66,6 +70,12 @@ const AdminDashboardPage = () => {
   // Extend form state
   const [extendDays, setExtendDays] = useState<number>(0);
   const [extendDate, setExtendDate] = useState<Date | undefined>();
+  
+  // Reset password form state
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem('admin_authenticated');
@@ -120,6 +130,39 @@ const AdminDashboardPage = () => {
     setExtendDays(0);
     setExtendDate(undefined);
     setExtendDialogOpen(true);
+  };
+
+  const handleResetPassword = (user: UserExtended) => {
+    setSelectedUser(user);
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowNewPassword(false);
+    setResetPasswordDialogOpen(true);
+  };
+
+  const handleConfirmResetPassword = async () => {
+    if (!selectedUser) return;
+    
+    if (newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+      toast.error('Passwords do not match');
+      return;
+    }
+    
+    setIsResettingPassword(true);
+    const result = await resetPassword(selectedUser.user_id, newPassword);
+
+    if (result.success) {
+      toast.success('Password reset successfully');
+      setResetPasswordDialogOpen(false);
+    } else {
+      toast.error(result.error || 'Failed to reset password');
+    }
+    setIsResettingPassword(false);
   };
 
   const handleConfirmExtend = async () => {
@@ -252,6 +295,13 @@ const AdminDashboardPage = () => {
                           >
                             <Plus className="mr-1 h-3 w-3" />
                             Extend
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleResetPassword(user)}
+                          >
+                            <Key className="h-3 w-3" />
                           </Button>
                           <Button
                             variant="outline"
@@ -433,6 +483,65 @@ const AdminDashboardPage = () => {
             >
               <Clock className="mr-2 h-4 w-4" />
               Extend Validity
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Password Dialog */}
+      <Dialog open={resetPasswordDialogOpen} onOpenChange={setResetPasswordDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Set a new password for {selectedUser?.email}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-password">New Password</Label>
+              <div className="relative">
+                <Input
+                  id="new-password"
+                  type={showNewPassword ? 'text' : 'password'}
+                  placeholder="Minimum 6 characters"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowNewPassword(!showNewPassword)}
+                >
+                  {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">Confirm Password</Label>
+              <Input
+                id="confirm-password"
+                type={showNewPassword ? 'text' : 'password'}
+                placeholder="Re-enter password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </div>
+            {newPassword && confirmPassword && newPassword !== confirmPassword && (
+              <p className="text-sm text-destructive">Passwords do not match</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetPasswordDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleConfirmResetPassword}
+              disabled={!newPassword || newPassword.length < 6 || newPassword !== confirmPassword || isResettingPassword}
+            >
+              <Key className="mr-2 h-4 w-4" />
+              {isResettingPassword ? 'Resetting...' : 'Reset Password'}
             </Button>
           </DialogFooter>
         </DialogContent>
