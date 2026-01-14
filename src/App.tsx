@@ -10,6 +10,7 @@ import { ValidityGuard } from "@/components/ValidityGuard";
 import { AdminGuard } from "@/components/AdminGuard";
 
 import LoginPage from "./pages/LoginPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import AnalyzerHome from "./pages/analyzer/AnalyzerHome";
 import MarketAnalysisPage from "./pages/analyzer/MarketAnalysisPage";
 import OfferAnalysisPage from "./pages/analyzer/OfferAnalysisPage";
@@ -37,6 +38,7 @@ const App = () => (
                 
                 {/* Auth routes */}
                 <Route path="/login" element={<LoginPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
                 
                 {/* Protected routes - require login + validity */}
                 <Route path="/landing" element={
