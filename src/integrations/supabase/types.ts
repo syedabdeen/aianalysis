@@ -3107,6 +3107,30 @@ export type Database = {
         }
         Relationships: []
       }
+      users_extended: {
+        Row: {
+          email: string
+          registered_at: string | null
+          user_id: string
+          username: string
+          valid_until: string
+        }
+        Insert: {
+          email: string
+          registered_at?: string | null
+          user_id: string
+          username: string
+          valid_until?: string
+        }
+        Update: {
+          email?: string
+          registered_at?: string | null
+          user_id?: string
+          username?: string
+          valid_until?: string
+        }
+        Relationships: []
+      }
       vendor_bank_details: {
         Row: {
           account_name: string
