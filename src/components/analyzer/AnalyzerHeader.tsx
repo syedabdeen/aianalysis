@@ -1,18 +1,32 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
-import { Settings, Sparkles, Languages, FileText, Home } from 'lucide-react';
+import { useSimpleAuth } from '@/contexts/SimpleAuthContext';
+import { Settings, Sparkles, Languages, FileText, Home, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 export function AnalyzerHeader() {
   const { language, setLanguage, isRTL } = useLanguage();
   const { settings } = useLocalCompanySettings();
+  const { user, userExtended, signOut } = useSimpleAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const toggleLanguage = () => {
     setLanguage(language === 'en' ? 'ar' : 'en');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      toast.success(language === 'ar' ? 'تم تسجيل الخروج بنجاح' : 'Logged out successfully');
+      navigate('/login');
+    } catch (error) {
+      toast.error(language === 'ar' ? 'فشل تسجيل الخروج' : 'Failed to logout');
+    }
   };
 
   const hasCompanyName = settings.company_name_en || settings.company_name_ar;
@@ -118,6 +132,13 @@ export function AnalyzerHeader() {
         </nav>
 
         <div className="flex items-center gap-2">
+          {/* User info */}
+          {user && (
+            <span className="text-sm text-muted-foreground hidden lg:block max-w-[150px] truncate">
+              {userExtended?.username || user.email}
+            </span>
+          )}
+          
           <Button
             variant="ghost"
             size="icon"
@@ -137,6 +158,20 @@ export function AnalyzerHeader() {
               <span className="sr-only">Settings</span>
             </Button>
           </Link>
+          
+          {/* Logout button */}
+          {user && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleLogout}
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              title={language === 'ar' ? 'تسجيل الخروج' : 'Logout'}
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="sr-only">{language === 'ar' ? 'تسجيل الخروج' : 'Logout'}</span>
+            </Button>
+          )}
         </div>
       </div>
     </header>
