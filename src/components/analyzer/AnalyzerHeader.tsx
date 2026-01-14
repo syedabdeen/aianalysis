@@ -12,7 +12,9 @@ import { TrialIndicator } from './TrialIndicator';
 export function AnalyzerHeader() {
   const { language, setLanguage, isRTL } = useLanguage();
   const { settings } = useLocalCompanySettings();
-  const { user, userExtended, signOut } = useSimpleAuth();
+  const { user, userExtended, signOut, getTrialDaysRemaining } = useSimpleAuth();
+  
+  const trialDaysRemaining = getTrialDaysRemaining();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -134,7 +136,7 @@ export function AnalyzerHeader() {
 
         <div className="flex items-center gap-2">
           {/* Trial indicator */}
-          {user && <TrialIndicator />}
+          {user && <TrialIndicator daysRemaining={trialDaysRemaining} />}
           
           {/* User info */}
           {user && (
