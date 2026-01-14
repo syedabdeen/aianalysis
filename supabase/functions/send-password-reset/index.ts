@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { Resend } from "https://esm.sh/resend@2.0.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,11 +19,13 @@ const handler = async (req: Request): Promise<Response> => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const zeptoMailApiKey = Deno.env.get("ZEPTOMAIL_API_KEY");
+    const resendApiKey = Deno.env.get("RESEND_API_KEY");
 
-    if (!zeptoMailApiKey) {
-      throw new Error("ZEPTOMAIL_API_KEY is not configured");
+    if (!resendApiKey) {
+      throw new Error("RESEND_API_KEY is not configured");
     }
+
+    const resend = new Resend(resendApiKey);
 
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
       auth: { autoRefreshToken: false, persistSession: false }
@@ -90,92 +93,72 @@ const handler = async (req: Request): Promise<Response> => {
     const origin = req.headers.get("origin") || "https://aianalysis.lovable.app";
     const resetUrl = `${origin}/reset-password?token=${token}`;
 
-    // Send email via ZeptoMail
-    const emailPayload = {
-      from: {
-        address: "cmc@widelens.info",
-        name: "ProcureMind",
-      },
-      to: [
-        {
-          email_address: {
-            address: email,
-            name: email,
-          },
-        },
-      ],
-      subject: "Reset Your Password - ProcureMind",
-      htmlbody: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
-            <h1 style="color: white; margin: 0; font-size: 28px;">Password Reset</h1>
+    // Send email via Resend
+    const emailHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">Password Reset</h1>
+        </div>
+        
+        <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+          <p style="font-size: 16px;">Hi,</p>
+          
+          <p style="font-size: 16px;">You requested to reset your password for your ProcureMind account.</p>
+          
+          <p style="font-size: 16px;">Click the button below to reset your password:</p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold; display: inline-block;">
+              Reset Password
+            </a>
           </div>
           
-          <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
-            <p style="font-size: 16px;">Hi,</p>
-            
-            <p style="font-size: 16px;">You requested to reset your password for your ProcureMind account.</p>
-            
-            <p style="font-size: 16px;">Click the button below to reset your password:</p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${resetUrl}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold; display: inline-block;">
-                Reset Password
-              </a>
-            </div>
-            
-            <p style="font-size: 14px; color: #666;">
-              This link will expire in <strong>1 hour</strong>.
-            </p>
-            
-            <p style="font-size: 14px; color: #666;">
-              If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
-            </p>
-            
-            <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
-            
-            <p style="font-size: 12px; color: #999; text-align: center;">
-              If the button doesn't work, copy and paste this link into your browser:<br>
-              <a href="${resetUrl}" style="color: #667eea; word-break: break-all;">${resetUrl}</a>
-            </p>
-          </div>
+          <p style="font-size: 14px; color: #666;">
+            This link will expire in <strong>1 hour</strong>.
+          </p>
           
-          <div style="text-align: center; padding: 20px;">
-            <p style="font-size: 12px; color: #999;">
-              © ${new Date().getFullYear()} ProcureMind. All rights reserved.
-            </p>
-          </div>
-        </body>
-        </html>
-      `,
-    };
+          <p style="font-size: 14px; color: #666;">
+            If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+          </p>
+          
+          <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+          
+          <p style="font-size: 12px; color: #999; text-align: center;">
+            If the button doesn't work, copy and paste this link into your browser:<br>
+            <a href="${resetUrl}" style="color: #667eea; word-break: break-all;">${resetUrl}</a>
+          </p>
+        </div>
+        
+        <div style="text-align: center; padding: 20px;">
+          <p style="font-size: 12px; color: #999;">
+            © ${new Date().getFullYear()} ProcureMind. All rights reserved.
+          </p>
+        </div>
+      </body>
+      </html>
+    `;
 
     console.log("Sending password reset email to:", email);
 
-    const emailResponse = await fetch("https://api.zeptomail.com/v1.1/email", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: zeptoMailApiKey,
-      },
-      body: JSON.stringify(emailPayload),
+    const { data, error: emailError } = await resend.emails.send({
+      from: "ProcureMind <onboarding@resend.dev>",
+      to: [email],
+      subject: "Reset Your Password - ProcureMind",
+      html: emailHtml,
     });
 
-    const emailResult = await emailResponse.text();
-    console.log("ZeptoMail response status:", emailResponse.status);
-    console.log("ZeptoMail response:", emailResult);
-
-    if (!emailResponse.ok) {
-      console.error("ZeptoMail error:", emailResult);
-      throw new Error(`Failed to send email: ${emailResult}`);
+    if (emailError) {
+      console.error("Resend error:", emailError);
+      throw new Error(`Failed to send email: ${emailError.message}`);
     }
+
+    console.log("Email sent successfully:", data);
 
     return new Response(
       JSON.stringify({ success: true, message: "Password reset email sent successfully" }),
