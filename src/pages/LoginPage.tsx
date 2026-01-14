@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Eye, EyeOff, LogIn, UserPlus, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, LogIn, UserPlus } from 'lucide-react';
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -84,43 +84,11 @@ const LoginPage = () => {
     }
   };
 
-  const [isSendingReset, setIsSendingReset] = useState(false);
-
-  const handleForgotPassword = async () => {
-    if (!email) {
-      toast.error('Please enter your email address first');
-      return;
-    }
-
-    if (!email.includes('@')) {
-      toast.error('Please enter a valid email address');
-      return;
-    }
-
-    setIsSendingReset(true);
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-password-reset`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        }
-      );
-
-      const data = await response.json();
-      
-      if (data.success) {
-        toast.success('Password reset email sent! Check your inbox.');
-      } else {
-        toast.error(data.error || 'Failed to send reset email');
-      }
-    } catch (err) {
-      console.error('Error sending reset email:', err);
-      toast.error('Failed to send recovery email. Please try again.');
-    } finally {
-      setIsSendingReset(false);
-    }
+  const handleResetPassword = () => {
+    toast.info(
+      'Mail to cmc@widelens.info or WhatsApp +971588325147 for new password',
+      { duration: 10000 }
+    );
   };
 
   // Load remembered email
@@ -228,12 +196,10 @@ const LoginPage = () => {
                 </div>
                 <button
                   type="button"
-                  onClick={handleForgotPassword}
-                  disabled={isSendingReset}
-                  className="text-sm text-primary hover:underline disabled:opacity-50 flex items-center gap-1"
+                  onClick={handleResetPassword}
+                  className="text-sm text-primary hover:underline"
                 >
-                  {isSendingReset && <Loader2 className="h-3 w-3 animate-spin" />}
-                  Forgot password?
+                  Reset Password
                 </button>
               </div>
             )}
