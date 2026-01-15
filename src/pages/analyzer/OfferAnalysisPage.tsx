@@ -33,10 +33,12 @@ interface UploadedFile {
 
 interface ItemComparisonEntry {
   item: string;
-  suppliers: Record<string, { unitPrice: number; quantity: number; total: number }>;
+  quantity: number;           // Unified quantity for the item
+  unit: string;               // Unit of measure (EA, MTR, SET, etc.)
+  suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
   lowestSupplier: string;
-  lowestPrice: number;
-  averagePrice: number;
+  lowestTotal: number;        // Lowest line total (qty × unit price)
+  averageTotal: number;       // Average line total
 }
 
 interface AnalysisResult {
@@ -409,58 +411,94 @@ export default function OfferAnalysisPage() {
     doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
     yPos += 12;
     
-    // ===== 3. ITEM-WISE PRICE COMPARISON (using itemComparisonMatrix) =====
+    // ===== 3. ITEM-WISE PRICE COMPARISON (Global Standard Format with Qty, Unit, Rate, Amount) =====
     if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
       checkNewPage(60);
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
-      doc.text('3. Item-wise Price Comparison (Unit Prices)', margin, yPos);
+      doc.text('3. Item-wise Price Comparison', margin, yPos);
       yPos += 8;
       
-      // Calculate column widths: Item | Vendors... | Lowest | Avg
-      const lowestColWidth = 22;
-      const avgColWidth = 22;
-      const itemColWidth = 50;
-      const availableForVendors = pageWidth - margin * 2 - itemColWidth - lowestColWidth - avgColWidth;
-      const vendorColWidth = availableForVendors / suppliers.length;
+      // Column widths: # | Item | Qty | Unit | [Rate | Amount] per vendor | Lowest | Avg
+      const colNo = 8;
+      const colItem = 38;
+      const colQty = 12;
+      const colUnit = 10;
+      const colLowest = 20;
+      const colAvg = 20;
+      const fixedColsWidth = colNo + colItem + colQty + colUnit + colLowest + colAvg;
+      const availableForVendors = pageWidth - margin * 2 - fixedColsWidth;
+      const colVendorWidth = availableForVendors / suppliers.length; // Each vendor: Rate + Amount
+      const colRate = colVendorWidth * 0.45;
+      const colAmount = colVendorWidth * 0.55;
       
-      // Table Header
-      doc.setFillColor(230, 230, 230);
+      // ===== HEADER ROW 1: Main columns =====
+      doc.setFillColor(220, 220, 220);
       doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-      doc.setFontSize(7);
+      doc.setFontSize(6);
       doc.setFont('helvetica', 'bold');
       
-      let headerX = margin + 2;
+      let headerX = margin + 1;
+      doc.text('#', headerX, yPos);
+      headerX += colNo;
       doc.text('Item Description', headerX, yPos);
-      headerX = margin + itemColWidth;
+      headerX += colItem;
+      doc.text('Qty', headerX, yPos);
+      headerX += colQty;
+      doc.text('Unit', headerX, yPos);
+      headerX += colUnit;
       
-      suppliers.forEach((supplier) => {
-        doc.text(supplier.substring(0, 12), headerX + 1, yPos, { maxWidth: vendorColWidth - 2 });
-        headerX += vendorColWidth;
+      // Vendor headers (spanning Rate + Amount)
+      suppliers.forEach((supplier, i) => {
+        const vendorX = margin + colNo + colItem + colQty + colUnit + (i * colVendorWidth);
+        doc.text(supplier.substring(0, 14), vendorX + 1, yPos, { maxWidth: colVendorWidth - 2 });
       });
       
       // Lowest header (yellow bg)
+      const lowestX = margin + colNo + colItem + colQty + colUnit + (suppliers.length * colVendorWidth);
       doc.setFillColor(255, 255, 200);
-      doc.rect(headerX, yPos - 5, lowestColWidth, rowHeight, 'F');
+      doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
       doc.setTextColor(0, 0, 0);
-      doc.text('Lowest', headerX + 2, yPos);
-      headerX += lowestColWidth;
+      doc.text('Lowest', lowestX + 1, yPos);
       
       // Avg header (blue bg)
+      const avgX = lowestX + colLowest;
       doc.setFillColor(200, 220, 255);
-      doc.rect(headerX, yPos - 5, avgColWidth, rowHeight, 'F');
-      doc.text('Avg', headerX + 2, yPos);
+      doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
+      doc.text('Avg', avgX + 1, yPos);
+      
+      yPos += rowHeight;
+      
+      // ===== HEADER ROW 2: Sub-headers for Rate | Amount per vendor =====
+      doc.setFillColor(235, 235, 235);
+      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight - 1, 'F');
+      doc.setFontSize(5);
+      
+      headerX = margin + colNo + colItem + colQty + colUnit;
+      suppliers.forEach(() => {
+        doc.text('Rate', headerX + 1, yPos);
+        doc.text('Amount', headerX + colRate + 1, yPos);
+        headerX += colVendorWidth;
+      });
+      
+      // Re-apply Lowest/Avg bg for row 2
+      doc.setFillColor(255, 255, 200);
+      doc.rect(lowestX, yPos - 5, colLowest, rowHeight - 1, 'F');
+      doc.text('(Total)', lowestX + 1, yPos);
+      doc.setFillColor(200, 220, 255);
+      doc.rect(avgX, yPos - 5, colAvg, rowHeight - 1, 'F');
+      doc.text('(Total)', avgX + 1, yPos);
       
       yPos += rowHeight;
       
       // Draw header bottom border
       doc.setDrawColor(0, 0, 0);
       doc.setLineWidth(0.3);
-      doc.line(margin, yPos - 3, pageWidth - margin, yPos - 3);
+      doc.line(margin, yPos - 4, pageWidth - margin, yPos - 4);
       
-      // Data rows (show up to 20 items)
+      // ===== DATA ROWS =====
       doc.setFont('helvetica', 'normal');
-      itemComparisonMatrix.slice(0, 20).forEach((item, idx) => {
+      itemComparisonMatrix.slice(0, 25).forEach((item, idx) => {
         checkNewPage(rowHeight + 5);
         
         // Alternate row background
@@ -469,42 +507,53 @@ export default function OfferAnalysisPage() {
           doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
         }
         
-        let xPos = margin + 2;
-        doc.setFontSize(7);
-        doc.setTextColor(0, 0, 0);
-        doc.text(String(item.item || '').substring(0, 28), xPos, yPos, { maxWidth: itemColWidth - 4 });
-        xPos = margin + itemColWidth;
+        const qty = item.quantity || 1;
+        const unit = item.unit || 'EA';
         
-        // Vendor unit prices
+        // Fixed columns
+        let xPos = margin + 1;
+        doc.setFontSize(6);
+        doc.setTextColor(0, 0, 0);
+        doc.text(String(idx + 1), xPos, yPos);
+        xPos += colNo;
+        doc.text(String(item.item || '').substring(0, 22), xPos, yPos, { maxWidth: colItem - 2 });
+        xPos += colItem;
+        doc.text(String(qty), xPos, yPos);
+        xPos += colQty;
+        doc.text(unit, xPos, yPos);
+        xPos += colUnit;
+        
+        // Vendor Rate/Amount columns
         suppliers.forEach((supplier) => {
           const supplierData = item.suppliers?.[supplier];
           const unitPrice = supplierData?.unitPrice || 0;
+          const amount = qty * unitPrice;
           const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
           
-          // Highlight lowest price cell in green
+          // Highlight lowest amount cell in green
           if (isLowest) {
             doc.setFillColor(198, 246, 213);
-            doc.rect(xPos, yPos - 5, vendorColWidth, rowHeight, 'F');
+            doc.rect(xPos, yPos - 5, colVendorWidth, rowHeight, 'F');
             doc.setFont('helvetica', 'bold');
           }
           
           doc.text(unitPrice > 0 ? unitPrice.toLocaleString() : '-', xPos + 1, yPos);
+          doc.text(amount > 0 ? amount.toLocaleString() : '-', xPos + colRate + 1, yPos);
           doc.setFont('helvetica', 'normal');
-          xPos += vendorColWidth;
+          xPos += colVendorWidth;
         });
         
-        // Lowest value (yellow bg)
+        // Lowest value (yellow bg) - based on line total
         doc.setFillColor(255, 255, 200);
-        doc.rect(xPos, yPos - 5, lowestColWidth, rowHeight, 'F');
+        doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.text(item.lowestPrice > 0 ? item.lowestPrice.toLocaleString() : '-', xPos + 2, yPos);
-        xPos += lowestColWidth;
+        doc.text((item.lowestTotal || 0) > 0 ? (item.lowestTotal || 0).toLocaleString() : '-', lowestX + 1, yPos);
         
-        // Average value (blue bg)
+        // Average value (blue bg) - based on line total
         doc.setFillColor(200, 220, 255);
-        doc.rect(xPos, yPos - 5, avgColWidth, rowHeight, 'F');
+        doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
         doc.setFont('helvetica', 'normal');
-        doc.text(item.averagePrice > 0 ? item.averagePrice.toFixed(0) : '-', xPos + 2, yPos);
+        doc.text((item.averageTotal || 0) > 0 ? Math.round(item.averageTotal || 0).toLocaleString() : '-', avgX + 1, yPos);
         
         yPos += rowHeight;
       });
@@ -515,11 +564,11 @@ export default function OfferAnalysisPage() {
       doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
       
       // If there are more items, show a note
-      if (itemComparisonMatrix.length > 20) {
+      if (itemComparisonMatrix.length > 25) {
         yPos += 4;
-        doc.setFontSize(7);
+        doc.setFontSize(6);
         doc.setTextColor(100, 100, 100);
-        doc.text(`... and ${itemComparisonMatrix.length - 20} more items (see Excel export for complete list)`, margin, yPos);
+        doc.text(`... and ${itemComparisonMatrix.length - 25} more items (see Excel export for complete list)`, margin, yPos);
       }
       
       yPos += 12;
@@ -719,14 +768,17 @@ export default function OfferAnalysisPage() {
     
     // Item-wise Price Comparison with Lowest and Average
     if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
-      csv += '\nITEM-WISE PRICE COMPARISON (Unit Prices)\n';
-      csv += `Item Description,${suppliers.join(',')},Lowest,Average\n`;
-      itemComparisonMatrix.forEach(item => {
-        const vendorPrices = suppliers.map(s => {
-          const price = item.suppliers?.[s]?.unitPrice || 0;
-          return price > 0 ? price : '-';
+      csv += '\nITEM-WISE PRICE COMPARISON\n';
+      csv += `#,Item Description,Qty,Unit,${suppliers.flatMap(s => [`${s} Rate`, `${s} Amount`]).join(',')},Lowest Total,Average Total\n`;
+      itemComparisonMatrix.forEach((item, idx) => {
+        const qty = item.quantity || 1;
+        const unit = item.unit || 'EA';
+        const vendorData = suppliers.flatMap(s => {
+          const rate = item.suppliers?.[s]?.unitPrice || 0;
+          const amount = qty * rate;
+          return [rate > 0 ? rate : '-', amount > 0 ? amount : '-'];
         }).join(',');
-        csv += `"${(item.item || '').replace(/"/g, "'")}",${vendorPrices},${item.lowestPrice > 0 ? item.lowestPrice : '-'},${item.averagePrice > 0 ? item.averagePrice.toFixed(2) : '-'}\n`;
+        csv += `${idx + 1},"${(item.item || '').replace(/"/g, "'")}",${qty},${unit},${vendorData},${(item.lowestTotal || 0) > 0 ? item.lowestTotal : '-'},${(item.averageTotal || 0) > 0 ? Math.round(item.averageTotal || 0) : '-'}\n`;
       });
     }
     

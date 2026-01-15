@@ -487,11 +487,13 @@ Provide accurate scores, identify the best options clearly, and give actionable 
     console.log('Analysis complete');
 
     // Build reliable item comparison matrix from extracted data (not relying on AI)
+    // This includes quantity, unit, and calculates lowest/average based on LINE TOTALS (qty × unit price)
     const buildItemComparisonMatrix = (quotations: any[]) => {
       // Collect all items from all suppliers, keyed by normalized description
       const itemMap = new Map<string, {
         description: string;
-        suppliers: Record<string, { unitPrice: number; quantity: number; total: number }>;
+        unit: string;
+        suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
       }>();
       
       const supplierNames = quotations.map(q => q.supplier.name);
@@ -504,11 +506,13 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           if (!rawDesc) return;
           
           const normalizedKey = rawDesc.toLowerCase().replace(/\s+/g, ' ').substring(0, 60);
+          const itemUnit = (item.unit || 'EA').toUpperCase();
           
           if (!itemMap.has(normalizedKey)) {
             itemMap.set(normalizedKey, {
               description: rawDesc.substring(0, 80),
-              suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0 }]))
+              unit: itemUnit,
+              suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' }]))
             });
           }
           
@@ -517,29 +521,42 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           const quantity = parseNumericValue(item.quantity) || 1;
           const total = parseNumericValue(item.totalPrice) || (unitPrice * quantity);
           
-          entry.suppliers[supplierName] = { unitPrice, quantity, total };
+          entry.suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
+          // Update the main unit if this one is more specific
+          if (itemUnit !== 'EA') {
+            entry.unit = itemUnit;
+          }
         });
       });
       
-      // Convert to array with lowest/avg calculations
+      // Convert to array with lowest/avg calculations BASED ON LINE TOTALS (qty × unit price)
       const result: any[] = [];
       
       itemMap.forEach((data, key) => {
-        const prices = Object.values(data.suppliers)
-          .map(s => s.unitPrice)
-          .filter(p => p > 0);
+        // Get the unified quantity (should be same across vendors, take first non-zero)
+        const quantities = Object.values(data.suppliers).map(s => s.quantity).filter(q => q > 0);
+        const quantity = quantities.length > 0 ? quantities[0] : 1;
         
-        const lowestPrice = prices.length > 0 ? Math.min(...prices) : 0;
-        const averagePrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
+        // Calculate line totals (qty × unitPrice) for each vendor for comparison
+        const lineTotals = Object.values(data.suppliers)
+          .map(s => s.unitPrice > 0 ? (quantity * s.unitPrice) : 0)
+          .filter(t => t > 0);
+        
+        const lowestTotal = lineTotals.length > 0 ? Math.min(...lineTotals) : 0;
+        const averageTotal = lineTotals.length > 0 ? lineTotals.reduce((a, b) => a + b, 0) / lineTotals.length : 0;
+        
+        // Find which supplier has the lowest line total
         const lowestSupplier = Object.entries(data.suppliers)
-          .find(([_, v]) => v.unitPrice === lowestPrice && v.unitPrice > 0)?.[0] || '';
+          .find(([_, v]) => v.unitPrice > 0 && (quantity * v.unitPrice) === lowestTotal)?.[0] || '';
         
         result.push({
           item: data.description,
+          quantity,           // Unified quantity for the item
+          unit: data.unit,    // Unit of measure (EA, MTR, SET, etc.)
           suppliers: data.suppliers,
           lowestSupplier,
-          lowestPrice,
-          averagePrice
+          lowestTotal,        // Lowest line total (qty × unit price) - used for comparison
+          averageTotal        // Average line total - used for reference
         });
       });
       
