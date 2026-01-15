@@ -19,6 +19,14 @@ import {
 } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // Max file size: 2MB per file
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
@@ -33,12 +41,12 @@ interface UploadedFile {
 
 interface ItemComparisonEntry {
   item: string;
-  quantity: number;           // Unified quantity for the item
-  unit: string;               // Unit of measure (EA, MTR, SET, etc.)
+  quantity: number;
+  unit: string;
   suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
   lowestSupplier: string;
-  lowestTotal: number;        // Lowest line total (qty × unit price)
-  averageTotal: number;       // Average line total
+  lowestTotal: number;
+  averageTotal: number;
 }
 
 interface AnalysisResult {
@@ -52,12 +60,11 @@ interface AnalysisResult {
 export default function OfferAnalysisPage() {
   const { language, isRTL } = useLanguage();
   const { settings } = useLocalCompanySettings();
-  const { saveReport } = useAnalysisReports();
+  const { saveReport, isSaving } = useAnalysisReports();
   const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Check for view mode from navigation state
   const viewReport = location.state?.viewReport;
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -71,12 +78,15 @@ export default function OfferAnalysisPage() {
   const [dragActive, setDragActive] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isViewMode, setIsViewMode] = useState(false);
+  const [savedReportRef, setSavedReportRef] = useState<string>('');
+  
+  // Save dialog state
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
 
   // Handle viewing saved report
   useEffect(() => {
     if (viewReport?.analysisData) {
       setAnalysisResult(viewReport.analysisData);
-      // Restore item comparison matrix if saved
       if (viewReport.analysisData?.itemComparisonMatrix) {
         setItemComparisonMatrix(viewReport.analysisData.itemComparisonMatrix);
       }
@@ -86,27 +96,34 @@ export default function OfferAnalysisPage() {
       setActiveTab('technical');
       setIsViewMode(true);
       setIsSaved(true);
+      setSavedReportRef(viewReport.sequenceNumber || '');
     }
   }, [viewReport]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Prevent drag events during analysis
+    if (isAnalyzing) return;
     setDragActive(e.type === 'dragenter' || e.type === 'dragover');
-  }, []);
+  }, [isAnalyzing]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Prevent drops during analysis
+    if (isAnalyzing) return;
     setDragActive(false);
     handleFiles(Array.from(e.dataTransfer.files));
-  }, []);
+  }, [isAnalyzing]);
 
   const handleFiles = (files: File[]) => {
+    // Prevent file handling during analysis
+    if (isAnalyzing) return;
+    
     const newFiles: UploadedFile[] = [];
     
     for (const file of files) {
-      // Validate file size
       if (file.size > MAX_FILE_SIZE) {
         toast({
           title: 'File too large',
@@ -146,7 +163,6 @@ export default function OfferAnalysisPage() {
     setProgressMessage('Preparing files...');
 
     try {
-      // Process files - convert to base64
       setProgressMessage('Processing documents...');
       const filesData = await Promise.all(uploadedFiles.map(async (uf, index) => {
         setProgressMessage(`Processing file ${index + 1}/${uploadedFiles.length}: ${uf.file.name}`);
@@ -154,7 +170,6 @@ export default function OfferAnalysisPage() {
           i === index ? { ...f, status: 'processing' } : f
         ));
 
-        // Convert all files to base64
         const base64 = await fileToBase64(uf.file);
         return { name: uf.file.name, type: uf.file.type, data: base64 };
       }));
@@ -167,7 +182,6 @@ export default function OfferAnalysisPage() {
       });
 
       if (error) {
-        // Handle specific error types with better messages
         if (error.name === 'FunctionsFetchError' || error.message?.includes('Failed to fetch')) {
           throw new Error('Analysis taking longer than expected. Please wait a moment and try again, or use smaller files.');
         }
@@ -195,7 +209,15 @@ export default function OfferAnalysisPage() {
       setProgressMessage('Analysis complete!');
       setActiveTab('technical');
       setIsSaved(false);
+      setSavedReportRef('');
+      
       toast({ title: 'Analysis Complete', description: 'All quotations analyzed successfully' });
+      
+      // Show save dialog after analysis completes (like Market Analysis)
+      setTimeout(() => {
+        setShowSaveDialog(true);
+      }, 500);
+      
     } catch (error: any) {
       console.error('Analysis error:', error);
       setUploadedFiles(prev => prev.map(f => ({ ...f, status: f.status === 'processing' ? 'error' : f.status })));
@@ -210,13 +232,12 @@ export default function OfferAnalysisPage() {
     }
   };
 
-  const handleSaveReport = async () => {
-    if (!analysisResult) return;
+  const handleSaveReport = async (): Promise<string | null> => {
+    if (!analysisResult) return null;
     
     const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
     const inputSummary = `${suppliers.length} Vendors compared`;
     
-    // Include itemComparisonMatrix and extractedQuotations in saved data
     const dataToSave = {
       ...analysisResult,
       itemComparisonMatrix,
@@ -232,21 +253,36 @@ export default function OfferAnalysisPage() {
       );
       
       setIsSaved(true);
+      setSavedReportRef(saved.sequenceNumber);
+      setShowSaveDialog(false);
+      
       toast({
         title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
         description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
       });
       
-      // Navigate to home after saving - use /analyzer if on analyzer path
-      const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
-      setTimeout(() => navigate(homePath), 1000);
+      return saved.sequenceNumber;
     } catch (error: any) {
+      console.error('Save report error:', error);
       toast({
         title: language === 'ar' ? 'خطأ' : 'Error',
-        description: error.message || 'Failed to save report',
+        description: error.message || 'Failed to save report. Please try again.',
         variant: 'destructive',
       });
+      return null;
     }
+  };
+
+  const handleSaveAndClose = async () => {
+    const saved = await handleSaveReport();
+    if (saved) {
+      // Navigate to reports page after saving
+      setTimeout(() => navigate('/reports'), 500);
+    }
+  };
+
+  const handleSkipSave = () => {
+    setShowSaveDialog(false);
   };
 
   const loadImageForPDF = (url: string): Promise<HTMLImageElement | null> => {
@@ -262,17 +298,23 @@ export default function OfferAnalysisPage() {
   const downloadPDF = async () => {
     if (!analysisResult) return;
     
-    // Use landscape A4 for better table display
+    // Auto-save if not already saved
+    let reportRef = savedReportRef;
+    if (!isSaved && !isViewMode) {
+      const savedRef = await handleSaveReport();
+      if (savedRef) {
+        reportRef = savedRef;
+      }
+    }
+    
     const doc = new jsPDF('l', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
     let yPos = 15;
     
-    // Get supplier names
     const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
     
-    // Helper function to add new page if needed
     const checkNewPage = (requiredSpace: number) => {
       if (yPos + requiredSpace > pageHeight - 20) {
         doc.addPage();
@@ -282,8 +324,8 @@ export default function OfferAnalysisPage() {
       return false;
     };
     
-    // Generate report reference
-    const reportRef = `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    // Use saved report reference or generate one
+    const pdfReportRef = reportRef || `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
     const currentDate = new Date();
     const dateStr = currentDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const timeStr = currentDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -302,35 +344,30 @@ export default function OfferAnalysisPage() {
       }
     }
 
-    // Company Name (left)
     doc.setFontSize(16);
     doc.setFont('helvetica', 'bold');
     doc.text(settings.company_name_en || 'Company Name', margin + logoOffset, yPos);
     
-    // Date/Time (right)
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.text(`Date: ${dateStr}`, pageWidth - margin, yPos, { align: 'right' });
     yPos += 5;
     doc.text(`Time: ${timeStr}`, pageWidth - margin, yPos, { align: 'right' });
     
-    // Company Address
     if (settings.address_en) {
       doc.setFontSize(9);
       doc.text(settings.address_en, margin + logoOffset, yPos);
     }
     yPos += 8;
     
-    // Line separator
     doc.setDrawColor(0, 0, 0);
     doc.setLineWidth(0.5);
     doc.line(margin, yPos, pageWidth - margin, yPos);
     yPos += 8;
     
-    // Report Reference
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
-    doc.text(`Report Reference: ${reportRef}`, margin, yPos);
+    doc.text(`Report Reference: ${pdfReportRef}`, margin, yPos);
     yPos += 10;
     
     // ===== TITLE =====
@@ -359,12 +396,10 @@ export default function OfferAnalysisPage() {
     doc.text('2. Commercial and Technical Terms', margin, yPos);
     yPos += 8;
     
-    // Calculate column widths
     const paramColWidth = 50;
     const vendorColWidth = (pageWidth - margin * 2 - paramColWidth) / suppliers.length;
     const rowHeight = 8;
     
-    // Table Header
     doc.setFillColor(230, 230, 230);
     doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
     doc.setFontSize(8);
@@ -376,12 +411,10 @@ export default function OfferAnalysisPage() {
     });
     yPos += rowHeight;
     
-    // Draw border under header
     doc.setDrawColor(0, 0, 0);
     doc.setLineWidth(0.3);
     doc.line(margin, yPos - 3, pageWidth - margin, yPos - 3);
     
-    // Combined Commercial + Technical rows
     const allTerms = [
       ...analysisResult.commercialComparison.map(row => ({ ...row, type: 'commercial' })),
       ...analysisResult.technicalComparison.slice(0, 4).map(row => ({ ...row, type: 'technical' }))
@@ -391,7 +424,6 @@ export default function OfferAnalysisPage() {
     allTerms.forEach((row, idx) => {
       checkNewPage(rowHeight + 5);
       
-      // Alternate row background
       if (idx % 2 === 0) {
         doc.setFillColor(248, 248, 248);
         doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
@@ -404,7 +436,6 @@ export default function OfferAnalysisPage() {
         const val = row.suppliers[supplier];
         const xPos = margin + paramColWidth + (i * vendorColWidth);
         
-        // Highlight lowest price
         if ((val as any)?.isLowest) {
           doc.setFillColor(198, 246, 213);
           doc.rect(xPos, yPos - 5, vendorColWidth, rowHeight, 'F');
@@ -419,13 +450,12 @@ export default function OfferAnalysisPage() {
       yPos += rowHeight;
     });
     
-    // Table border
     doc.setDrawColor(150, 150, 150);
     doc.setLineWidth(0.1);
     doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
     yPos += 12;
     
-    // ===== 3. ITEM-WISE PRICE COMPARISON (Global Standard Format with Qty, Unit, Rate, Amount) =====
+    // ===== 3. ITEM-WISE PRICE COMPARISON =====
     if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
       checkNewPage(60);
       doc.setFontSize(11);
@@ -433,7 +463,6 @@ export default function OfferAnalysisPage() {
       doc.text('3. Item-wise Price Comparison', margin, yPos);
       yPos += 8;
       
-      // Column widths: # | Item | Qty | Unit | [Rate | Amount] per vendor | Lowest | Avg
       const colNo = 8;
       const colItem = 38;
       const colQty = 12;
@@ -442,11 +471,10 @@ export default function OfferAnalysisPage() {
       const colAvg = 20;
       const fixedColsWidth = colNo + colItem + colQty + colUnit + colLowest + colAvg;
       const availableForVendors = pageWidth - margin * 2 - fixedColsWidth;
-      const colVendorWidth = availableForVendors / suppliers.length; // Each vendor: Rate + Amount
+      const colVendorWidth = availableForVendors / suppliers.length;
       const colRate = colVendorWidth * 0.45;
       const colAmount = colVendorWidth * 0.55;
       
-      // ===== HEADER ROW 1: Main columns =====
       doc.setFillColor(220, 220, 220);
       doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
       doc.setFontSize(6);
@@ -462,20 +490,17 @@ export default function OfferAnalysisPage() {
       doc.text('Unit', headerX, yPos);
       headerX += colUnit;
       
-      // Vendor headers (spanning Rate + Amount)
       suppliers.forEach((supplier, i) => {
         const vendorX = margin + colNo + colItem + colQty + colUnit + (i * colVendorWidth);
         doc.text(supplier.substring(0, 14), vendorX + 1, yPos, { maxWidth: colVendorWidth - 2 });
       });
       
-      // Lowest header (yellow bg)
       const lowestX = margin + colNo + colItem + colQty + colUnit + (suppliers.length * colVendorWidth);
       doc.setFillColor(255, 255, 200);
       doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
       doc.setTextColor(0, 0, 0);
       doc.text('Lowest', lowestX + 1, yPos);
       
-      // Avg header (blue bg)
       const avgX = lowestX + colLowest;
       doc.setFillColor(200, 220, 255);
       doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
@@ -483,7 +508,6 @@ export default function OfferAnalysisPage() {
       
       yPos += rowHeight;
       
-      // ===== HEADER ROW 2: Sub-headers for Rate | Amount per vendor =====
       doc.setFillColor(235, 235, 235);
       doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight - 1, 'F');
       doc.setFontSize(5);
@@ -495,7 +519,6 @@ export default function OfferAnalysisPage() {
         headerX += colVendorWidth;
       });
       
-      // Re-apply Lowest/Avg bg for row 2
       doc.setFillColor(255, 255, 200);
       doc.rect(lowestX, yPos - 5, colLowest, rowHeight - 1, 'F');
       doc.text('(Total)', lowestX + 1, yPos);
@@ -505,17 +528,14 @@ export default function OfferAnalysisPage() {
       
       yPos += rowHeight;
       
-      // Draw header bottom border
       doc.setDrawColor(0, 0, 0);
       doc.setLineWidth(0.3);
       doc.line(margin, yPos - 4, pageWidth - margin, yPos - 4);
       
-      // ===== DATA ROWS =====
       doc.setFont('helvetica', 'normal');
       itemComparisonMatrix.slice(0, 25).forEach((item, idx) => {
         checkNewPage(rowHeight + 5);
         
-        // Alternate row background
         if (idx % 2 === 0) {
           doc.setFillColor(250, 250, 250);
           doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
@@ -524,7 +544,6 @@ export default function OfferAnalysisPage() {
         const qty = item.quantity || 1;
         const unit = item.unit || 'EA';
         
-        // Fixed columns
         let xPos = margin + 1;
         doc.setFontSize(6);
         doc.setTextColor(0, 0, 0);
@@ -537,14 +556,12 @@ export default function OfferAnalysisPage() {
         doc.text(unit, xPos, yPos);
         xPos += colUnit;
         
-        // Vendor Rate/Amount columns
         suppliers.forEach((supplier) => {
           const supplierData = item.suppliers?.[supplier];
           const unitPrice = supplierData?.unitPrice || 0;
           const amount = qty * unitPrice;
           const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
           
-          // Highlight lowest amount cell in green
           if (isLowest) {
             doc.setFillColor(198, 246, 213);
             doc.rect(xPos, yPos - 5, colVendorWidth, rowHeight, 'F');
@@ -557,13 +574,11 @@ export default function OfferAnalysisPage() {
           xPos += colVendorWidth;
         });
         
-        // Lowest value (yellow bg) - based on line total
         doc.setFillColor(255, 255, 200);
         doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
         doc.setFont('helvetica', 'bold');
         doc.text((item.lowestTotal || 0) > 0 ? (item.lowestTotal || 0).toLocaleString() : '-', lowestX + 1, yPos);
         
-        // Average value (blue bg) - based on line total
         doc.setFillColor(200, 220, 255);
         doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
         doc.setFont('helvetica', 'normal');
@@ -572,12 +587,10 @@ export default function OfferAnalysisPage() {
         yPos += rowHeight;
       });
       
-      // Table bottom border
       doc.setDrawColor(150, 150, 150);
       doc.setLineWidth(0.2);
       doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
       
-      // If there are more items, show a note
       if (itemComparisonMatrix.length > 25) {
         yPos += 4;
         doc.setFontSize(6);
@@ -596,7 +609,6 @@ export default function OfferAnalysisPage() {
       doc.text('Price Summary (Subtotal, Tax, Total)', margin, yPos);
       yPos += 6;
       
-      // Summary table header
       const summaryRows = ['Subtotal', 'Tax/VAT', 'Grand Total'];
       const summaryParamWidth = 35;
       const summaryVendorWidth = (pageWidth - margin * 2 - summaryParamWidth) / suppliers.length;
@@ -612,7 +624,6 @@ export default function OfferAnalysisPage() {
       });
       yPos += rowHeight;
       
-      // Summary data rows
       doc.setFont('helvetica', 'normal');
       summaryRows.forEach((rowLabel, rowIdx) => {
         checkNewPage(rowHeight + 5);
@@ -630,7 +641,6 @@ export default function OfferAnalysisPage() {
         doc.setFontSize(7);
         doc.text(rowLabel, margin + 2, yPos);
         
-        // Find min total for highlighting
         const totals = extractedQuotations.map(q => q.commercial?.total || 0);
         const minTotal = Math.min(...totals.filter(t => t > 0));
         
@@ -647,7 +657,6 @@ export default function OfferAnalysisPage() {
             value = q?.commercial?.total || 0;
           }
           
-          // Highlight lowest total
           if (isTotal && value > 0 && value === minTotal) {
             doc.setFillColor(198, 246, 213);
             doc.rect(xPos, yPos - 5, summaryVendorWidth, rowHeight, 'F');
@@ -671,7 +680,6 @@ export default function OfferAnalysisPage() {
     doc.text('4. Final Recommendation', margin, yPos);
     yPos += 8;
     
-    // Recommendation box
     doc.setFillColor(240, 249, 255);
     doc.setDrawColor(49, 130, 206);
     doc.setLineWidth(0.5);
@@ -714,7 +722,6 @@ export default function OfferAnalysisPage() {
     doc.setDrawColor(150, 150, 150);
     doc.setLineWidth(0.2);
     
-    // Prepared By
     doc.rect(margin, yPos, sigBoxWidth, sigBoxHeight);
     doc.setFont('helvetica', 'bold');
     doc.text('Prepared By:', margin + 3, yPos + 5);
@@ -723,7 +730,6 @@ export default function OfferAnalysisPage() {
     doc.text('Date: _______________', margin + 3, yPos + 18);
     doc.text('Sign: _______________', margin + 3, yPos + 23);
     
-    // Verified By
     const verifyX = margin + sigBoxWidth + 10;
     doc.rect(verifyX, yPos, sigBoxWidth, sigBoxHeight);
     doc.setFont('helvetica', 'bold');
@@ -733,7 +739,6 @@ export default function OfferAnalysisPage() {
     doc.text('Date: _______________', verifyX + 3, yPos + 18);
     doc.text('Sign: _______________', verifyX + 3, yPos + 23);
     
-    // Approved By
     const approveX = margin + (sigBoxWidth + 10) * 2;
     doc.rect(approveX, yPos, sigBoxWidth, sigBoxHeight);
     doc.setFont('helvetica', 'bold');
@@ -743,44 +748,46 @@ export default function OfferAnalysisPage() {
     doc.text('Date: _______________', approveX + 3, yPos + 18);
     doc.text('Sign: _______________', approveX + 3, yPos + 23);
     
-    // Save PDF directly (no print dialog)
-    doc.save(`quotation-analysis-${reportRef}-${dateStr.replace(/\//g, '-')}.pdf`);
+    doc.save(`quotation-analysis-${pdfReportRef}-${dateStr.replace(/\//g, '-')}.pdf`);
     
     toast({
       title: language === 'ar' ? 'تم التحميل' : 'PDF Downloaded',
       description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
     });
-    
-    // Navigate to home after download - use /analyzer if on analyzer path
-    const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
-    setTimeout(() => navigate(homePath), 1000);
   };
 
-  const downloadExcel = () => {
+  const downloadExcel = async () => {
     if (!analysisResult) return;
-    const reportRef = `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    
+    // Auto-save if not already saved
+    let reportRef = savedReportRef;
+    if (!isSaved && !isViewMode) {
+      const savedRef = await handleSaveReport();
+      if (savedRef) {
+        reportRef = savedRef;
+      }
+    }
+    
+    const pdfReportRef = reportRef || `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
     
     let csv = 'QUOTATION COMPARATIVE STATEMENT\n';
-    csv += `Report Reference,${reportRef}\n`;
+    csv += `Report Reference,${pdfReportRef}\n`;
     csv += `Generated,${new Date().toLocaleString()}\n\n`;
     
     const suppliers = Object.keys(analysisResult.commercialComparison[0]?.suppliers || {});
     
-    // Commercial Comparison
     csv += 'COMMERCIAL COMPARISON\n';
     csv += `Criteria,${suppliers.join(',')}\n`;
     analysisResult.commercialComparison.forEach(row => {
       csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'}"`).join(',')}\n`;
     });
     
-    // Technical Comparison
     csv += '\nTECHNICAL COMPARISON\n';
     csv += `Criteria,${suppliers.join(',')}\n`;
     analysisResult.technicalComparison.forEach(row => {
       csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'} (${row.suppliers[s]?.score || 0})"`).join(',')}\n`;
     });
     
-    // Item-wise Price Comparison with Lowest and Average
     if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
       csv += '\nITEM-WISE PRICE COMPARISON\n';
       csv += `#,Item Description,Qty,Unit,${suppliers.flatMap(s => [`${s} Rate`, `${s} Amount`]).join(',')},Lowest Total,Average Total\n`;
@@ -796,7 +803,6 @@ export default function OfferAnalysisPage() {
       });
     }
     
-    // Subtotal / VAT / Total Summary
     if (extractedQuotations && extractedQuotations.length > 0) {
       csv += '\nPRICE SUMMARY\n';
       csv += `Parameter,${suppliers.join(',')}\n`;
@@ -813,7 +819,6 @@ export default function OfferAnalysisPage() {
       });
     }
     
-    // Recommendation
     csv += '\nRECOMMENDATION\n';
     csv += `Best Value,"${analysisResult.summary.bestValue}"\n`;
     csv += `Lowest Price,"${analysisResult.summary.lowestEvaluated}"\n`;
@@ -822,17 +827,13 @@ export default function OfferAnalysisPage() {
     const blob = new Blob([csv], { type: 'text/csv' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `quotation-analysis-${reportRef}.csv`;
+    link.download = `quotation-analysis-${pdfReportRef}.csv`;
     link.click();
     
     toast({
       title: language === 'ar' ? 'تم التحميل' : 'Excel Downloaded',
       description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
     });
-    
-    // Navigate to home after download - use /analyzer if on analyzer path
-    const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
-    setTimeout(() => navigate(homePath), 1000);
   };
 
   const getRecommendationBadge = (rec: string) => {
@@ -850,15 +851,56 @@ export default function OfferAnalysisPage() {
     setExtractedQuotations([]);
     setIsViewMode(false);
     setIsSaved(false);
+    setSavedReportRef('');
     setActiveTab('upload');
     setUploadedFiles([]);
-    // Clear navigation state
     window.history.replaceState({}, document.title);
+  };
+
+  // Handle upload zone click - prevent during analysis
+  const handleUploadZoneClick = () => {
+    if (isAnalyzing) return;
+    document.getElementById('file-upload')?.click();
   };
 
   return (
     <AnalyzerLayout>
       <div className="space-y-6">
+        {/* Save Dialog */}
+        <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Save className="h-5 w-5 text-primary" />
+                {language === 'ar' ? 'حفظ التقرير' : 'Save Report'}
+              </DialogTitle>
+              <DialogDescription>
+                {language === 'ar' 
+                  ? 'هل تريد حفظ هذا التقرير في مركز التقارير؟ سيتم إنشاء رقم مرجعي فريد.'
+                  : 'Would you like to save this report to the Reports Center? A unique reference number will be generated.'}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={handleSkipSave} disabled={isSaving}>
+                {language === 'ar' ? 'ليس الآن' : 'Not now'}
+              </Button>
+              <Button onClick={handleSaveAndClose} disabled={isSaving} className="gap-2">
+                {isSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {language === 'ar' ? 'جاري الحفظ...' : 'Saving...'}
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    {language === 'ar' ? 'حفظ' : 'Save'}
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* View Mode Banner */}
         {isViewMode && viewReport && (
           <div className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
@@ -891,6 +933,19 @@ export default function OfferAnalysisPage() {
           </div>
         )}
 
+        {/* Saved indicator */}
+        {isSaved && savedReportRef && !isViewMode && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            <span className="text-sm text-green-700 dark:text-green-400">
+              {language === 'ar' ? `تم حفظ التقرير: ${savedReportRef}` : `Report saved: ${savedReportRef}`}
+            </span>
+            <Button variant="link" size="sm" onClick={() => navigate('/reports')} className="text-green-700 dark:text-green-400 p-0 h-auto">
+              {language === 'ar' ? 'عرض التقارير' : 'View Reports'}
+            </Button>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
@@ -904,8 +959,8 @@ export default function OfferAnalysisPage() {
           {analysisResult && (
             <div className="flex gap-2">
               {!isSaved && !isViewMode && (
-                <Button onClick={handleSaveReport} variant="outline" className="gap-2">
-                  <Save className="h-4 w-4" />
+                <Button onClick={handleSaveReport} variant="outline" className="gap-2" disabled={isSaving}>
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   {language === 'ar' ? 'حفظ' : 'Save'}
                 </Button>
               )}
@@ -926,13 +981,41 @@ export default function OfferAnalysisPage() {
           <TabsContent value="upload" className="space-y-4">
             <Card>
               <CardContent className="p-6">
-                <div onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
-                  className={cn('border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors', dragActive ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50')}
-                  onClick={() => document.getElementById('file-upload')?.click()}>
-                  <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <h3 className="font-semibold text-lg mb-2">{language === 'ar' ? 'اسحب وأفلت الملفات هنا' : 'Drag and drop files here'}</h3>
-                  <p className="text-sm text-muted-foreground">PDF, Images, Excel, Word files</p>
-                  <input id="file-upload" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.doc,.docx" onChange={(e) => e.target.files && handleFiles(Array.from(e.target.files))} className="hidden" />
+                <div 
+                  onDragEnter={handleDrag} 
+                  onDragLeave={handleDrag} 
+                  onDragOver={handleDrag} 
+                  onDrop={handleDrop}
+                  className={cn(
+                    'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
+                    isAnalyzing 
+                      ? 'border-muted bg-muted/20 cursor-not-allowed pointer-events-none' 
+                      : dragActive 
+                        ? 'border-primary bg-primary/5 cursor-pointer' 
+                        : 'border-border hover:border-primary/50 cursor-pointer'
+                  )}
+                  onClick={handleUploadZoneClick}
+                >
+                  <Upload className={cn("h-12 w-12 mx-auto mb-4", isAnalyzing ? "text-muted" : "text-muted-foreground")} />
+                  <h3 className="font-semibold text-lg mb-2">
+                    {isAnalyzing 
+                      ? (language === 'ar' ? 'جاري التحليل...' : 'Analyzing...') 
+                      : (language === 'ar' ? 'اسحب وأفلت الملفات هنا' : 'Drag and drop files here')}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {isAnalyzing 
+                      ? (language === 'ar' ? 'يرجى الانتظار' : 'Please wait') 
+                      : 'PDF, Images, Excel, Word files'}
+                  </p>
+                  <input 
+                    id="file-upload" 
+                    type="file" 
+                    multiple 
+                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.doc,.docx" 
+                    onChange={(e) => e.target.files && handleFiles(Array.from(e.target.files))} 
+                    className="hidden" 
+                    disabled={isAnalyzing}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -949,7 +1032,14 @@ export default function OfferAnalysisPage() {
                           <p className="text-sm font-medium truncate">{uf.file.name}</p>
                           <p className="text-xs text-muted-foreground">{(uf.file.size / 1024).toFixed(1)} KB</p>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeFile(uf.id)}><X className="h-4 w-4" /></Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => removeFile(uf.id)} 
+                          disabled={isAnalyzing}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -957,28 +1047,91 @@ export default function OfferAnalysisPage() {
               </Card>
             )}
 
-            {isAnalyzing && <Card><CardContent className="p-6"><div className="flex items-center gap-3"><Loader2 className="h-5 w-5 animate-spin text-primary" /><span>{progressMessage || 'Analyzing...'}</span></div><Progress value={analysisProgress} className="h-2 mt-4" /><p className="text-xs text-muted-foreground mt-2">{analysisProgress}% complete</p></CardContent></Card>}
+            {isAnalyzing && (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    <span>{progressMessage || 'Analyzing...'}</span>
+                  </div>
+                  <Progress value={analysisProgress} className="h-2 mt-4" />
+                  <p className="text-xs text-muted-foreground mt-2">{analysisProgress}% complete</p>
+                </CardContent>
+              </Card>
+            )}
 
             <div className="flex justify-center">
-              <Button size="lg" onClick={startAnalysis} disabled={uploadedFiles.length < 1 || isAnalyzing}><Sparkles className="h-5 w-5 mr-2" />Start Analysis</Button>
+              <Button size="lg" onClick={startAnalysis} disabled={uploadedFiles.length < 1 || isAnalyzing}>
+                {isAnalyzing ? (
+                  <>
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    {language === 'ar' ? 'جاري التحليل...' : 'Analyzing...'}
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-5 w-5 mr-2" />
+                    {language === 'ar' ? 'بدء التحليل' : 'Start Analysis'}
+                  </>
+                )}
+              </Button>
             </div>
           </TabsContent>
 
           <TabsContent value="technical">
             {analysisResult?.technicalComparison && (
-              <Card><CardHeader><CardTitle>Technical Comparison</CardTitle></CardHeader><CardContent>
-                <Table><TableHeader><TableRow><TableHead>Criteria</TableHead>{Object.keys(analysisResult.technicalComparison[0]?.suppliers || {}).map(s => <TableHead key={s}>{s}</TableHead>)}</TableRow></TableHeader>
-                <TableBody>{analysisResult.technicalComparison.map((row, i) => <TableRow key={i}><TableCell className="font-medium">{row.criteria}</TableCell>{Object.entries(row.suppliers).map(([s, d]) => <TableCell key={s}>{d.value} {d.score >= 80 && <CheckCircle className="h-4 w-4 text-green-500 inline ml-1" />}</TableCell>)}</TableRow>)}</TableBody></Table>
-              </CardContent></Card>
+              <Card>
+                <CardHeader><CardTitle>Technical Comparison</CardTitle></CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Criteria</TableHead>
+                        {Object.keys(analysisResult.technicalComparison[0]?.suppliers || {}).map(s => <TableHead key={s}>{s}</TableHead>)}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {analysisResult.technicalComparison.map((row, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium">{row.criteria}</TableCell>
+                          {Object.entries(row.suppliers).map(([s, d]) => (
+                            <TableCell key={s}>{d.value} {d.score >= 80 && <CheckCircle className="h-4 w-4 text-green-500 inline ml-1" />}</TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
             )}
           </TabsContent>
 
           <TabsContent value="commercial">
             {analysisResult?.commercialComparison && (
-              <Card><CardHeader><CardTitle>Commercial Comparison</CardTitle></CardHeader><CardContent>
-                <Table><TableHeader><TableRow><TableHead>Criteria</TableHead>{Object.keys(analysisResult.commercialComparison[0]?.suppliers || {}).map(s => <TableHead key={s}>{s}</TableHead>)}</TableRow></TableHeader>
-                <TableBody>{analysisResult.commercialComparison.map((row, i) => <TableRow key={i}><TableCell className="font-medium">{row.criteria}</TableCell>{Object.entries(row.suppliers).map(([s, d]) => <TableCell key={s} className={d.isLowest ? 'text-green-600 font-semibold' : ''}>{d.value} {d.isLowest && <Badge className="bg-green-500 ml-1">Lowest</Badge>}</TableCell>)}</TableRow>)}</TableBody></Table>
-              </CardContent></Card>
+              <Card>
+                <CardHeader><CardTitle>Commercial Comparison</CardTitle></CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Criteria</TableHead>
+                        {Object.keys(analysisResult.commercialComparison[0]?.suppliers || {}).map(s => <TableHead key={s}>{s}</TableHead>)}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {analysisResult.commercialComparison.map((row, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium">{row.criteria}</TableCell>
+                          {Object.entries(row.suppliers).map(([s, d]) => (
+                            <TableCell key={s} className={d.isLowest ? 'text-green-600 font-semibold' : ''}>
+                              {d.value} {d.isLowest && <Badge className="bg-green-500 ml-1">Lowest</Badge>}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
             )}
           </TabsContent>
 
@@ -988,15 +1141,50 @@ export default function OfferAnalysisPage() {
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {analysisResult.ranking.map((s, i) => (
                     <Card key={s.supplierName} className={i === 0 ? 'border-primary ring-2 ring-primary/20' : ''}>
-                      <CardHeader><div className="flex justify-between"><CardTitle className="text-lg">{s.supplierName}</CardTitle><Badge variant="outline">#{i + 1}</Badge></div>{getRecommendationBadge(s.recommendation)}</CardHeader>
-                      <CardContent><div className="grid grid-cols-3 gap-2 text-center"><div><p className="text-2xl font-bold text-primary">{s.technicalScore}</p><p className="text-xs text-muted-foreground">Technical</p></div><div><p className="text-2xl font-bold text-blue-500">{s.commercialScore}</p><p className="text-xs text-muted-foreground">Commercial</p></div><div><p className="text-2xl font-bold text-green-500">{s.overallScore}</p><p className="text-xs text-muted-foreground">Overall</p></div></div></CardContent>
+                      <CardHeader>
+                        <div className="flex justify-between">
+                          <CardTitle className="text-lg">{s.supplierName}</CardTitle>
+                          <Badge variant="outline">#{i + 1}</Badge>
+                        </div>
+                        {getRecommendationBadge(s.recommendation)}
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div>
+                            <p className="text-2xl font-bold text-primary">{s.technicalScore}</p>
+                            <p className="text-xs text-muted-foreground">Technical</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-blue-500">{s.commercialScore}</p>
+                            <p className="text-xs text-muted-foreground">Commercial</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-green-500">{s.overallScore}</p>
+                            <p className="text-xs text-muted-foreground">Overall</p>
+                          </div>
+                        </div>
+                      </CardContent>
                     </Card>
                   ))}
                 </div>
                 {analysisResult.summary && (
                   <Card className="bg-gradient-to-r from-primary/5 to-primary/10 mt-4">
-                    <CardHeader><CardTitle><Award className="h-5 w-5 inline mr-2 text-primary" />Recommendation Summary</CardTitle></CardHeader>
-                    <CardContent><div className="grid md:grid-cols-2 gap-4"><div><p className="text-sm text-muted-foreground">Lowest Evaluated:</p><p className="font-semibold text-lg">{analysisResult.summary.lowestEvaluated}</p></div><div><p className="text-sm text-muted-foreground">Best Value:</p><p className="font-semibold text-lg text-green-600">{analysisResult.summary.bestValue}</p></div></div><p className="mt-4 border-t pt-4">{analysisResult.summary.recommendation}</p></CardContent>
+                    <CardHeader>
+                      <CardTitle><Award className="h-5 w-5 inline mr-2 text-primary" />Recommendation Summary</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Lowest Evaluated:</p>
+                          <p className="font-semibold text-lg">{analysisResult.summary.lowestEvaluated}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Best Value:</p>
+                          <p className="font-semibold text-lg text-green-600">{analysisResult.summary.bestValue}</p>
+                        </div>
+                      </div>
+                      <p className="mt-4 border-t pt-4">{analysisResult.summary.recommendation}</p>
+                    </CardContent>
                   </Card>
                 )}
               </>
