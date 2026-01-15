@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -25,9 +25,16 @@ import {
   Globe, 
   FileSpreadsheet, 
   FolderOpen,
-  Plus
+  Plus,
+  RefreshCw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import jsPDF from 'jspdf';
+import { 
+  generateOfferAnalysisPDF, 
+  generateOfferAnalysisExcel,
+  getSupplierColumns 
+} from '@/lib/exports/offerAnalysisExport';
 
 export default function ReportsPage() {
   const { language, isRTL } = useLanguage();
@@ -38,113 +45,251 @@ export default function ReportsPage() {
     isLoading,
     isDeleting,
     marketReportsCount, 
-    offerReportsCount 
+    offerReportsCount,
+    refetch
   } = useAnalysisReports();
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  // Default to offer tab if there are offer reports and no market reports
   const [activeTab, setActiveTab] = useState<'market' | 'offer'>('market');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [reportToDelete, setReportToDelete] = useState<StoredReport | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const marketReports = getReportsByType('market');
   const offerReports = getReportsByType('offer');
   const currentReports = activeTab === 'market' ? marketReports : offerReports;
 
+  // Set default tab based on available reports
+  useEffect(() => {
+    if (offerReportsCount > 0 && marketReportsCount === 0) {
+      setActiveTab('offer');
+    }
+  }, [offerReportsCount, marketReportsCount]);
+
   const handleView = (report: StoredReport) => {
-    // Navigate to the appropriate analysis page with the report data
     const path = report.type === 'market' ? '/market-analysis' : '/offer-analysis';
     navigate(path, { state: { viewReport: report } });
   };
 
-  const generateMarketPDFHTML = (report: StoredReport) => {
-    const analysis = report.analysisData;
-    return `<!DOCTYPE html><html><head><title>Market Analysis - ${report.sequenceNumber}</title>
-      <style>body{font-family:Arial;padding:40px;max-width:1100px;margin:0 auto}.header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #333;padding-bottom:20px;margin-bottom:30px}.logo{max-height:60px}h1{color:#1a365d}h2{color:#2d3748;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin-top:30px}table{width:100%;border-collapse:collapse;margin-top:10px;font-size:11px}th,td{border:1px solid #e2e8f0;padding:8px;text-align:left}th{background:#f7fafc}.badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:12px;background:#e2e8f0}.recommendation{background:#ebf8ff;border-left:4px solid #3182ce;padding:15px;margin-top:20px}a{color:#3182ce;text-decoration:none}</style></head>
-      <body><div class="header"><div>${settings.logo_url?`<img src="${settings.logo_url}" class="logo"/>`:''}<h1>${settings.company_name_en||'Company'}</h1></div><div style="text-align:right"><p>${settings.address_en||''}</p><p>${settings.phone||''}</p></div></div>
-      <h1 style="text-align:center">Market Analysis Report</h1>
-      <p style="text-align:center;color:#718096">Reference: ${report.sequenceNumber} | Generated: ${new Date(report.createdAt).toLocaleDateString()}</p>
-      <h2>Product: ${analysis?.product?.name || report.title}</h2>
-      <p>${analysis?.product?.description || ''}</p>
-      <h2>Manufacturers (${analysis?.manufacturers?.length || 0})</h2>
-      <table><thead><tr><th>Name</th><th>Country</th><th>Email</th><th>Phone</th><th>Website</th><th>Type</th></tr></thead>
-      <tbody>${analysis?.manufacturers?.map((m:any)=>`<tr><td>${m.name}</td><td>${m.country}</td><td>${m.email||'N/A'}</td><td>${m.phone||'N/A'}</td><td>${m.website?`<a href="${m.website}">${m.website}</a>`:'N/A'}</td><td>${m.isRegional?'Regional':'Global'}</td></tr>`).join('')||''}</tbody></table>
-      <h2>Suppliers (${analysis?.suppliers?.length || 0})</h2>
-      <table><thead><tr><th>Name</th><th>City</th><th>Contact Person</th><th>Email</th><th>Phone</th><th>Type</th></tr></thead>
-      <tbody>${analysis?.suppliers?.map((s:any)=>`<tr><td>${s.name}</td><td>${s.city}</td><td>${s.contactPerson||'N/A'}</td><td>${s.email||'N/A'}</td><td>${s.phone||'N/A'}</td><td>${s.isLocal?'Local':'Regional'}</td></tr>`).join('')||''}</tbody></table>
-      ${analysis?.marketSummary ? `<div class="recommendation"><strong>Recommendation:</strong><br/>${analysis.marketSummary.recommendation}</div>` : ''}
-      </body></html>`;
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+      toast({
+        title: language === 'ar' ? 'تم التحديث' : 'Refreshed',
+        description: language === 'ar' ? 'تم تحديث قائمة التقارير' : 'Reports list updated',
+      });
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
-  const generateOfferPDFHTML = (report: StoredReport) => {
+  // Generate Market Analysis PDF using jsPDF (direct download)
+  const generateMarketPDF = async (report: StoredReport) => {
     const analysis = report.analysisData;
-    const suppliers = Object.keys(analysis?.commercialComparison?.[0]?.suppliers || {});
-    return `<!DOCTYPE html><html><head><title>Offer Analysis - ${report.sequenceNumber}</title>
-      <style>body{font-family:Arial;padding:40px;max-width:1100px;margin:0 auto}.header{border-bottom:2px solid #333;padding-bottom:20px;margin-bottom:30px}h1{color:#1a365d}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #e2e8f0;padding:8px;text-align:left}th{background:#f7fafc}.lowest{background:#c6f6d5}.recommendation{background:#ebf8ff;border-left:4px solid #3182ce;padding:15px;margin-top:20px}</style></head>
-      <body><div class="header">${settings.logo_url?`<img src="${settings.logo_url}" style="max-height:60px"/>`:''}<h1>${settings.company_name_en||'Company'}</h1><p>${settings.address_en||''}</p></div>
-      <h1 style="text-align:center">Quotation Comparative Analysis</h1>
-      <p style="text-align:center;color:#718096">Reference: ${report.sequenceNumber} | Generated: ${new Date(report.createdAt).toLocaleDateString()}</p>
-      <h2>Commercial Comparison</h2>
-      <table><thead><tr><th>Criteria</th>${suppliers.map(n=>`<th>${n}</th>`).join('')}</tr></thead>
-      <tbody>${analysis?.commercialComparison?.map((row:any)=>`<tr><td><strong>${row.criteria}</strong></td>${suppliers.map(name=>{const val=row.suppliers[name];return`<td class="${val?.isLowest?'lowest':''}">${val?.value||'N/A'}</td>`;}).join('')}</tr>`).join('')||''}</tbody></table>
-      ${analysis?.summary ? `<div class="recommendation"><p><strong>Best Value:</strong> ${analysis.summary.bestValue}</p><p><strong>Lowest Price:</strong> ${analysis.summary.lowestEvaluated}</p><p><strong>Recommendation:</strong> ${analysis.summary.recommendation}</p></div>` : ''}
-      </body></html>`;
-  };
-
-  const handleDownloadPDF = (report: StoredReport) => {
-    const html = report.type === 'market' 
-      ? generateMarketPDFHTML(report) 
-      : generateOfferPDFHTML(report);
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    let yPos = 20;
     
-    const w = window.open('', '_blank');
-    if (w) {
-      w.document.write(html);
-      w.document.close();
-      w.onload = () => w.print();
+    // Header
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(settings.company_name_en || 'Company', margin, yPos);
+    yPos += 8;
+    
+    if (settings.address_en) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(settings.address_en, margin, yPos);
+      yPos += 6;
     }
     
-    toast({
-      title: language === 'ar' ? 'تم الفتح' : 'Report Opened',
-      description: language === 'ar' ? 'استخدم خيار الطباعة لحفظ PDF' : 'Use print dialog to save as PDF',
-    });
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 10;
+    
+    // Title
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('MARKET ANALYSIS REPORT', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 8;
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Reference: ${report.sequenceNumber}`, margin, yPos);
+    doc.text(`Date: ${new Date(report.createdAt).toLocaleDateString()}`, pageWidth - margin, yPos, { align: 'right' });
+    yPos += 12;
+    
+    // Product Info
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Product Information', margin, yPos);
+    yPos += 6;
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Name: ${analysis?.product?.name || report.title}`, margin, yPos);
+    yPos += 5;
+    doc.text(`Category: ${analysis?.product?.category || 'N/A'}`, margin, yPos);
+    yPos += 5;
+    if (analysis?.product?.description) {
+      const descLines = doc.splitTextToSize(analysis.product.description, pageWidth - margin * 2);
+      doc.text(descLines.slice(0, 3), margin, yPos);
+      yPos += Math.min(descLines.length, 3) * 4;
+    }
+    yPos += 8;
+    
+    // Manufacturers
+    if (analysis?.manufacturers?.length > 0) {
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Manufacturers (${analysis.manufacturers.length})`, margin, yPos);
+      yPos += 6;
+      
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      analysis.manufacturers.slice(0, 10).forEach((m: any, idx: number) => {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.text(`${idx + 1}. ${m.name} - ${m.country} ${m.email ? `| ${m.email}` : ''}`, margin, yPos);
+        yPos += 4;
+      });
+      yPos += 6;
+    }
+    
+    // Suppliers
+    if (analysis?.suppliers?.length > 0) {
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Suppliers (${analysis.suppliers.length})`, margin, yPos);
+      yPos += 6;
+      
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      analysis.suppliers.slice(0, 10).forEach((s: any, idx: number) => {
+        if (yPos > 270) {
+          doc.addPage();
+          yPos = 20;
+        }
+        doc.text(`${idx + 1}. ${s.name} - ${s.city} ${s.email ? `| ${s.email}` : ''}`, margin, yPos);
+        yPos += 4;
+      });
+      yPos += 6;
+    }
+    
+    // Recommendation
+    if (analysis?.marketSummary?.recommendation) {
+      if (yPos > 250) {
+        doc.addPage();
+        yPos = 20;
+      }
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Recommendation', margin, yPos);
+      yPos += 6;
+      
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      const recLines = doc.splitTextToSize(analysis.marketSummary.recommendation, pageWidth - margin * 2);
+      doc.text(recLines.slice(0, 6), margin, yPos);
+    }
+    
+    doc.save(`market-analysis-${report.sequenceNumber}.pdf`);
+  };
+
+  const handleDownloadPDF = async (report: StoredReport) => {
+    try {
+      if (report.type === 'market') {
+        await generateMarketPDF(report);
+      } else {
+        // Use shared Offer Analysis PDF generator
+        const analysis = report.analysisData;
+        const itemComparisonMatrix = analysis?.itemComparisonMatrix || [];
+        const extractedQuotations = analysis?.extractedQuotations || [];
+        
+        await generateOfferAnalysisPDF(
+          analysis,
+          itemComparisonMatrix,
+          extractedQuotations,
+          report.sequenceNumber,
+          {
+            companyName: settings.company_name_en || 'Company Name',
+            companyAddress: settings.address_en,
+            logoUrl: settings.logo_url,
+          }
+        );
+      }
+      
+      toast({
+        title: language === 'ar' ? 'تم التحميل' : 'PDF Downloaded',
+        description: `${report.sequenceNumber}.pdf`,
+      });
+    } catch (error) {
+      console.error('PDF generation error:', error);
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' ? 'فشل إنشاء PDF' : 'Failed to generate PDF',
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleDownloadExcel = (report: StoredReport) => {
-    let csv = '';
-    const analysis = report.analysisData;
-    
-    if (report.type === 'market') {
-      csv = `Market Analysis Report - ${report.sequenceNumber}\n\n`;
-      csv += `Product Name,${analysis?.product?.name || ''}\n`;
-      csv += `Category,${analysis?.product?.category || ''}\n\n`;
-      csv += 'Manufacturers\nName,Country,Email,Phone,Website,Address,Type\n';
-      analysis?.manufacturers?.forEach((m:any) => {
-        csv += `"${m.name}","${m.country}","${m.email||''}","${m.phone||''}","${m.website||''}","${m.address||''}","${m.isRegional?'Regional':'Global'}"\n`;
+    try {
+      let csv = '';
+      const analysis = report.analysisData;
+      
+      if (report.type === 'market') {
+        csv = `Market Analysis Report - ${report.sequenceNumber}\n\n`;
+        csv += `Product Name,${analysis?.product?.name || ''}\n`;
+        csv += `Category,${analysis?.product?.category || ''}\n\n`;
+        csv += 'Manufacturers\nName,Country,Email,Phone,Website,Address,Type\n';
+        analysis?.manufacturers?.forEach((m: any) => {
+          csv += `"${m.name}","${m.country}","${m.email || ''}","${m.phone || ''}","${m.website || ''}","${m.address || ''}","${m.isRegional ? 'Regional' : 'Global'}"\n`;
+        });
+        csv += '\nSuppliers\nName,City,Contact Person,Email,Phone,Address,Type\n';
+        analysis?.suppliers?.forEach((s: any) => {
+          csv += `"${s.name}","${s.city}","${s.contactPerson || ''}","${s.email || ''}","${s.phone || ''}","${s.address || ''}","${s.isLocal ? 'Local' : 'Regional'}"\n`;
+        });
+        
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `${report.sequenceNumber}.csv`;
+        link.click();
+      } else {
+        // Use shared Offer Analysis Excel generator
+        const itemComparisonMatrix = analysis?.itemComparisonMatrix || [];
+        const extractedQuotations = analysis?.extractedQuotations || [];
+        
+        generateOfferAnalysisExcel(
+          analysis,
+          itemComparisonMatrix,
+          extractedQuotations,
+          report.sequenceNumber
+        );
+      }
+      
+      toast({
+        title: language === 'ar' ? 'تم التنزيل' : 'Downloaded',
+        description: `${report.sequenceNumber}.csv`,
       });
-      csv += '\nSuppliers\nName,City,Contact Person,Email,Phone,Address,Type\n';
-      analysis?.suppliers?.forEach((s:any) => {
-        csv += `"${s.name}","${s.city}","${s.contactPerson||''}","${s.email||''}","${s.phone||''}","${s.address||''}","${s.isLocal?'Local':'Regional'}"\n`;
+    } catch (error) {
+      console.error('Excel generation error:', error);
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' ? 'فشل إنشاء Excel' : 'Failed to generate Excel',
+        variant: 'destructive',
       });
-    } else {
-      csv = `Offer Analysis Report - ${report.sequenceNumber}\n\nCommercial Comparison\n`;
-      const suppliers = Object.keys(analysis?.commercialComparison?.[0]?.suppliers || {});
-      csv += `Criteria,${suppliers.join(',')}\n`;
-      analysis?.commercialComparison?.forEach((row:any) => {
-        csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'}"`).join(',')}\n`;
-      });
-      csv += `\nRecommendation\nBest Value,${analysis?.summary?.bestValue || ''}\nLowest Price,${analysis?.summary?.lowestEvaluated || ''}\n`;
     }
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${report.sequenceNumber}.csv`;
-    link.click();
-    
-    toast({
-      title: language === 'ar' ? 'تم التنزيل' : 'Downloaded',
-      description: `${report.sequenceNumber}.csv`,
-    });
   };
 
   const handleDeleteClick = (report: StoredReport) => {
@@ -211,20 +356,32 @@ export default function ReportsPage() {
     <AnalyzerLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-            <FileText className="w-6 h-6 text-primary-foreground" />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+              <FileText className="w-6 h-6 text-primary-foreground" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">
+                {language === 'ar' ? 'مركز التقارير' : 'Reports Center'}
+              </h1>
+              <p className="text-muted-foreground">
+                {language === 'ar' 
+                  ? 'جميع تقارير التحليل المحفوظة' 
+                  : 'All saved analysis reports'}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold">
-              {language === 'ar' ? 'مركز التقارير' : 'Reports Center'}
-            </h1>
-            <p className="text-muted-foreground">
-              {language === 'ar' 
-                ? 'جميع تقارير التحليل المحفوظة' 
-                : 'All saved analysis reports'}
-            </p>
-          </div>
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="gap-2"
+          >
+            <RefreshCw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+            {language === 'ar' ? 'تحديث' : 'Refresh'}
+          </Button>
         </div>
 
         {/* Tabs */}
