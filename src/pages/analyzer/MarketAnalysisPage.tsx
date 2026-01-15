@@ -284,13 +284,44 @@ export default function MarketAnalysisPage() {
   const downloadPDF = async () => {
     if (!analysis) return;
 
+    // Auto-save report if not already saved
+    let reportRef = '';
+    if (!isSaved) {
+      try {
+        const manufacturers = analysis.manufacturers?.length || 0;
+        const suppliers = analysis.suppliers?.length || 0;
+        const inputSummary = `${manufacturers} Manufacturers, ${suppliers} Suppliers`;
+        
+        const saved = await saveReport(
+          'market',
+          analysis.product?.name || textInput || 'Market Analysis',
+          analysis,
+          inputSummary
+        );
+        
+        reportRef = saved.sequenceNumber;
+        setIsSaved(true);
+        
+        toast({
+          title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
+          description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
+        });
+      } catch (error: any) {
+        console.error('Auto-save error:', error);
+        // Generate a temporary reference if save fails
+        reportRef = `MA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+      }
+    } else {
+      // Use existing reference for already-saved reports
+      reportRef = viewReport?.sequenceNumber || `MA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    }
+
     const doc = new jsPDF('p', 'mm', 'a4');
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 15;
     let yPos = 15;
     
-    const reportRef = `MA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
     const currentDate = new Date();
     const dateStr = currentDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const timeStr = currentDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -540,8 +571,38 @@ export default function MarketAnalysisPage() {
     });
   };
 
-  const downloadExcel = () => {
+  const downloadExcel = async () => {
     if (!analysis) return;
+
+    // Auto-save report if not already saved
+    let reportRef = '';
+    if (!isSaved) {
+      try {
+        const manufacturers = analysis.manufacturers?.length || 0;
+        const suppliers = analysis.suppliers?.length || 0;
+        const inputSummary = `${manufacturers} Manufacturers, ${suppliers} Suppliers`;
+        
+        const saved = await saveReport(
+          'market',
+          analysis.product?.name || textInput || 'Market Analysis',
+          analysis,
+          inputSummary
+        );
+        
+        reportRef = saved.sequenceNumber;
+        setIsSaved(true);
+        
+        toast({
+          title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
+          description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
+        });
+      } catch (error: any) {
+        console.error('Auto-save error:', error);
+        reportRef = `MA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+      }
+    } else {
+      reportRef = viewReport?.sequenceNumber || `MA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    }
 
     // Generate CSV data
     let csv = 'Market Analysis Report\n\n';
@@ -577,11 +638,14 @@ export default function MarketAnalysisPage() {
     csv += `Lead Time,${analysis.marketSummary.leadTime}\n`;
     csv += `Recommendation,${analysis.marketSummary.recommendation}\n`;
 
+    // Add report reference to CSV header
+    csv = `Report Reference: ${reportRef}\nDate: ${new Date().toLocaleDateString()}\n\n` + csv;
+
     // Download CSV
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `market-analysis-${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `market-analysis-${reportRef}.csv`;
     link.click();
 
     toast({
