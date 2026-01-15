@@ -24,7 +24,7 @@ export interface AnalysisResult {
   summary: { lowestEvaluated: string; bestValue: string; recommendation: string; notes: string[] };
 }
 
-// Get canonical supplier list from analysis result with fallback to extracted quotations
+// Get canonical supplier list from extracted quotations FIRST (most reliable)
 export function getSupplierColumns(analysisResult: AnalysisResult, extractedQuotations?: any[]): string[] {
   // Priority 1: Use extractedQuotations (has full names that match itemComparisonMatrix)
   if (extractedQuotations && extractedQuotations.length > 0) {
@@ -119,6 +119,28 @@ export function findSupplierData(
   return undefined;
 }
 
+// Find extracted quotation by supplier name with fuzzy matching
+function findQuotationBySupplier(extractedQuotations: any[], supplierName: string): any | undefined {
+  if (!extractedQuotations) return undefined;
+  
+  // Exact match first
+  const exactMatch = extractedQuotations.find(q => q.supplier?.name === supplierName);
+  if (exactMatch) return exactMatch;
+  
+  // Fuzzy match
+  const normalizedTarget = normalizeForMatch(supplierName);
+  for (const q of extractedQuotations) {
+    const fullName = q.supplier?.name || '';
+    const normalizedFull = normalizeForMatch(fullName);
+    if (normalizedFull.startsWith(normalizedTarget) || normalizedTarget.startsWith(normalizedFull) ||
+        normalizedFull.includes(normalizedTarget) || normalizedTarget.includes(normalizedFull)) {
+      return q;
+    }
+  }
+  
+  return undefined;
+}
+
 // Load image for PDF
 export async function loadImageForPDF(url: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
@@ -144,8 +166,8 @@ export async function generateOfferAnalysisPDF(
   const margin = 15;
   let yPos = 15;
   
-  // Get canonical supplier columns
-  const suppliers = getSupplierColumns(analysisResult);
+  // Get canonical supplier columns from extractedQuotations (most reliable)
+  const suppliers = getSupplierColumns(analysisResult, extractedQuotations);
   
   const checkNewPage = (requiredSpace: number) => {
     if (yPos + requiredSpace > pageHeight - 20) {
@@ -207,6 +229,70 @@ export async function generateOfferAnalysisPDF(
   doc.text('QUOTATION COMPARATIVE STATEMENT', pageWidth / 2, yPos, { align: 'center' });
   yPos += 12;
   
+  // ===== SUPPLIER SUMMARY BLOCK (Phase 5) =====
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Supplier Summary', margin, yPos);
+  yPos += 6;
+  
+  const summaryColWidths = {
+    name: 70,
+    reference: 40,
+    items: 30,
+    total: 50
+  };
+  const summaryTableWidth = summaryColWidths.name + summaryColWidths.reference + summaryColWidths.items + summaryColWidths.total;
+  
+  // Header row
+  doc.setFillColor(220, 220, 220);
+  doc.rect(margin, yPos - 5, summaryTableWidth, rowHeight, 'F');
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  let headerX = margin + 2;
+  doc.text('Supplier Name', headerX, yPos);
+  headerX += summaryColWidths.name;
+  doc.text('Quote Ref', headerX, yPos);
+  headerX += summaryColWidths.reference;
+  doc.text('Items', headerX, yPos);
+  headerX += summaryColWidths.items;
+  doc.text('Total Amount', headerX, yPos);
+  yPos += rowHeight;
+  
+  // Supplier rows
+  doc.setFont('helvetica', 'normal');
+  suppliers.forEach((supplier, idx) => {
+    const q = findQuotationBySupplier(extractedQuotations, supplier);
+    const itemsExtracted = q?.itemsExtracted || q?.items?.length || 0;
+    const pricedItems = q?.pricedItemsCount || (q?.items?.filter((i: any) => i.unitPrice > 0)?.length || 0);
+    const total = q?.commercial?.total || 0;
+    const currency = q?.commercial?.currency || 'AED';
+    const quoteRef = q?.quotation?.reference || '—';
+    const hasExtractionIssue = q?._extractionIssue;
+    
+    if (idx % 2 === 0) {
+      doc.setFillColor(250, 250, 250);
+      doc.rect(margin, yPos - 5, summaryTableWidth, rowHeight, 'F');
+    }
+    
+    if (hasExtractionIssue || itemsExtracted === 0) {
+      doc.setFillColor(255, 245, 238);
+      doc.rect(margin, yPos - 5, summaryTableWidth, rowHeight, 'F');
+    }
+    
+    let cellX = margin + 2;
+    doc.text(supplier.substring(0, 35), cellX, yPos, { maxWidth: summaryColWidths.name - 4 });
+    cellX += summaryColWidths.name;
+    doc.text(quoteRef.substring(0, 15), cellX, yPos);
+    cellX += summaryColWidths.reference;
+    doc.text(`${pricedItems}/${itemsExtracted}`, cellX, yPos);
+    cellX += summaryColWidths.items;
+    doc.text(total > 0 ? `${currency} ${total.toLocaleString()}` : (hasExtractionIssue ? 'Extraction failed' : '—'), cellX, yPos);
+    
+    yPos += rowHeight;
+  });
+  
+  yPos += 8;
+  
   // ===== 1. EXECUTIVE SUMMARY =====
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
@@ -264,9 +350,9 @@ export async function generateOfferAnalysisPDF(
     doc.setFontSize(8);
     doc.text(row.criteria, margin + 2, yPos, { maxWidth: paramColWidth - 4 });
     
-    // Render cells in canonical supplier order
+    // Render cells in canonical supplier order using fuzzy matching
     suppliers.forEach((supplier, i) => {
-      const val = row.suppliers[supplier];
+      const val = findSupplierData(row.suppliers || {}, supplier, extractedQuotations);
       const xPos = margin + paramColWidth + (i * vendorColWidth);
       
       if ((val as any)?.isLowest) {
@@ -315,15 +401,15 @@ export async function generateOfferAnalysisPDF(
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(0, 0, 0);
       
-      let headerX = margin + 1;
-      doc.text('#', headerX, yPos);
-      headerX += colNo;
-      doc.text('Item Description', headerX, yPos);
-      headerX += colItem;
-      doc.text('Qty', headerX, yPos);
-      headerX += colQty;
-      doc.text('Unit', headerX, yPos);
-      headerX += colUnit;
+      let hdrX = margin + 1;
+      doc.text('#', hdrX, yPos);
+      hdrX += colNo;
+      doc.text('Item Description', hdrX, yPos);
+      hdrX += colItem;
+      doc.text('Qty', hdrX, yPos);
+      hdrX += colQty;
+      doc.text('Unit', hdrX, yPos);
+      hdrX += colUnit;
       
       // Supplier headers in canonical order
       suppliers.forEach((supplier, i) => {
@@ -349,11 +435,11 @@ export async function generateOfferAnalysisPDF(
       doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight - 1, 'F');
       doc.setFontSize(5);
       
-      headerX = margin + colNo + colItem + colQty + colUnit;
+      hdrX = margin + colNo + colItem + colQty + colUnit;
       suppliers.forEach(() => {
-        doc.text('Rate', headerX + 1, yPos);
-        doc.text('Amount', headerX + colRate + 1, yPos);
-        headerX += colVendorWidth;
+        doc.text('Rate', hdrX + 1, yPos);
+        doc.text('Amount', hdrX + colRate + 1, yPos);
+        hdrX += colVendorWidth;
       });
       
       doc.setFillColor(255, 255, 200);
@@ -407,9 +493,8 @@ export async function generateOfferAnalysisPDF(
       doc.text(unit, xPos, yPos);
       xPos += colUnit;
       
-      // Render supplier data in canonical order
+      // Render supplier data in canonical order using fuzzy matching
       suppliers.forEach((supplier) => {
-        // Use fuzzy matching for supplier data
         const supplierData = findSupplierData(item.suppliers || {}, supplier, extractedQuotations);
         const unitPrice = supplierData?.unitPrice || 0;
         const amount = supplierData?.total || (qty * unitPrice);
@@ -455,7 +540,7 @@ export async function generateOfferAnalysisPDF(
     doc.text('Price Summary (Subtotal, Tax, Total)', margin, yPos);
     yPos += 6;
     
-    const summaryRows = ['Subtotal', 'Tax/VAT', 'Grand Total'];
+    const priceSummaryRows = ['Subtotal', 'Tax/VAT', 'Grand Total'];
     const summaryParamWidth = 35;
     const summaryVendorWidth = (pageWidth - margin * 2 - summaryParamWidth) / suppliers.length;
     
@@ -471,7 +556,7 @@ export async function generateOfferAnalysisPDF(
     yPos += rowHeight;
     
     doc.setFont('helvetica', 'normal');
-    summaryRows.forEach((rowLabel, rowIdx) => {
+    priceSummaryRows.forEach((rowLabel, rowIdx) => {
       checkNewPage(rowHeight + 5);
       
       const isTotal = rowLabel === 'Grand Total';
@@ -490,9 +575,9 @@ export async function generateOfferAnalysisPDF(
       const totals = extractedQuotations.map(q => q.commercial?.total || 0);
       const minTotal = Math.min(...totals.filter(t => t > 0));
       
-      // Render in canonical supplier order
+      // Render in canonical supplier order using fuzzy matching
       suppliers.forEach((supplier, i) => {
-        const q = extractedQuotations.find(eq => eq.supplier?.name === supplier);
+        const q = findQuotationBySupplier(extractedQuotations, supplier);
         const xPos = margin + summaryParamWidth + (i * summaryVendorWidth);
         let value = 0;
         
@@ -612,10 +697,23 @@ export function generateOfferAnalysisExcel(
   csv += `Report Reference,${reportRef}\n`;
   csv += `Generated,${new Date().toLocaleString()}\n\n`;
   
+  // Supplier summary section
+  csv += 'SUPPLIER SUMMARY\n';
+  csv += 'Supplier Name,Quote Reference,Items Extracted,Priced Items,Total Amount\n';
+  suppliers.forEach(supplier => {
+    const q = findQuotationBySupplier(extractedQuotations, supplier);
+    const itemsExtracted = q?.itemsExtracted || q?.items?.length || 0;
+    const pricedItems = q?.pricedItemsCount || (q?.items?.filter((i: any) => i.unitPrice > 0)?.length || 0);
+    const total = q?.commercial?.total || 0;
+    const currency = q?.commercial?.currency || 'AED';
+    const quoteRef = q?.quotation?.reference || '—';
+    csv += `"${supplier}","${quoteRef}",${itemsExtracted},${pricedItems},"${total > 0 ? `${currency} ${total}` : '—'}"\n`;
+  });
+  csv += '\n';
+  
   csv += 'COMMERCIAL COMPARISON\n';
   csv += `Criteria,${suppliers.join(',')}\n`;
   analysisResult.commercialComparison.forEach(row => {
-    // Use fuzzy matching for supplier data
     csv += `"${row.criteria}",${suppliers.map(s => {
       const data = findSupplierData(row.suppliers || {}, s, extractedQuotations);
       return `"${data?.value || '—'}"`;
@@ -653,7 +751,7 @@ export function generateOfferAnalysisExcel(
     csv += `Parameter,${suppliers.join(',')}\n`;
     ['Subtotal', 'Tax/VAT', 'Grand Total'].forEach(label => {
       const values = suppliers.map(s => {
-        const q = extractedQuotations.find(eq => eq.supplier?.name === s);
+        const q = findQuotationBySupplier(extractedQuotations, s);
         let val = 0;
         if (label === 'Subtotal') val = q?.commercial?.subtotal || 0;
         else if (label === 'Tax/VAT') val = q?.commercial?.tax || 0;
