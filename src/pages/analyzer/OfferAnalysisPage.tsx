@@ -167,9 +167,15 @@ export default function OfferAnalysisPage() {
       });
 
       if (error) {
-        // Handle specific error types
-        if (error.message?.includes('Failed to fetch') || error.message?.includes('network')) {
-          throw new Error('Connection timed out. Try uploading fewer or smaller files.');
+        // Handle specific error types with better messages
+        if (error.name === 'FunctionsFetchError' || error.message?.includes('Failed to fetch')) {
+          throw new Error('Analysis taking longer than expected. Please wait a moment and try again, or use smaller files.');
+        }
+        if (error.message?.includes('timeout') || error.message?.includes('TIMEOUT')) {
+          throw new Error('Request timed out. Try uploading fewer files or smaller documents.');
+        }
+        if (error.message?.includes('JSON') || error.message?.includes('parse')) {
+          throw new Error('Error processing AI response. Please try again.');
         }
         throw error;
       }

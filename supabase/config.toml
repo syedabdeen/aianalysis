@@ -1,1 +1,4 @@
 project_id = "bgdgcvqxlxqviqoqwgmr"
+
+[functions.ai-offer-analysis]
+verify_jwt = false

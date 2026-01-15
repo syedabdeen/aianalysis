@@ -20,6 +20,54 @@ function parseNumericValue(value: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+// Repair malformed JSON from AI responses
+function repairJSON(jsonStr: string): string {
+  return jsonStr
+    // Replace single quotes with double quotes (common AI mistake)
+    .replace(/'/g, '"')
+    // Remove trailing commas before ] or }
+    .replace(/,\s*([\]}])/g, '$1')
+    // Fix unquoted property names: { key: value } -> { "key": value }
+    .replace(/(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+    // Remove control characters that break JSON
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    // Fix escaped single quotes in values
+    .replace(/\\'/g, "'")
+    // Remove BOM and other invisible chars
+    .replace(/^\uFEFF/, '')
+    .trim();
+}
+
+// Safe JSON parse with repair fallback
+function safeJSONParse(content: string, fileName: string): any | null {
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.error(`No JSON object found in response for ${fileName}`);
+    return null;
+  }
+
+  let jsonStr = jsonMatch[0];
+  
+  // Try parsing as-is first
+  try {
+    return JSON.parse(jsonStr);
+  } catch (parseError) {
+    console.log(`JSON parse failed for ${fileName}, attempting repair...`);
+  }
+  
+  // Try with repaired JSON
+  try {
+    const repaired = repairJSON(jsonStr);
+    const result = JSON.parse(repaired);
+    console.log(`✓ JSON repaired successfully for ${fileName}`);
+    return result;
+  } catch (repairError) {
+    console.error(`JSON repair also failed for ${fileName}:`, repairError);
+  }
+  
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -178,14 +226,14 @@ Return ONLY this JSON structure:
         const extractionData = await extractionResponse.json();
         const content = extractionData.choices?.[0]?.message?.content || '';
         
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const extracted = JSON.parse(jsonMatch[0]);
+        // Use safe JSON parse with repair fallback
+        const extracted = safeJSONParse(content, file.name);
+        if (extracted) {
           console.log(`✓ Extracted from ${file.name}: Supplier="${extracted.supplier?.name}", Total=${extracted.commercial?.total}, Items=${extracted.items?.length || 0}`);
           return extracted;
         } else {
-          console.error(`No JSON found in response for ${file.name}. Response preview:`, content.substring(0, 200));
-          return { error: 'No JSON in AI response', supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
+          console.error(`Failed to parse response for ${file.name}. Response preview:`, content.substring(0, 200));
+          return { error: 'JSON parse failed', supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
         }
       } catch (e: any) {
         if (e.name === 'AbortError') {
