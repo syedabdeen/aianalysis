@@ -534,58 +534,96 @@ Provide accurate scores, identify the best options clearly, and give actionable 
 
     console.log('Analysis complete');
 
-    // Build reliable item comparison matrix from extracted data (not relying on AI)
-    // This includes quantity, unit, and calculates lowest/average based on LINE TOTALS (qty × unit price)
+    // Build reliable item comparison matrix with fuzzy matching for item descriptions
     const buildItemComparisonMatrix = (quotations: any[]) => {
-      // Collect all items from all suppliers, keyed by normalized description
-      const itemMap = new Map<string, {
+      const supplierNames = quotations.map(q => q.supplier.name);
+      
+      // Normalize description for matching
+      const normalizeDesc = (desc: string): string => {
+        return (desc || '')
+          .toLowerCase()
+          .replace(/[^\w\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      };
+      
+      // Calculate similarity between two descriptions (Jaccard + prefix)
+      const similarity = (a: string, b: string): number => {
+        const tokensA = new Set(normalizeDesc(a).split(' ').filter(t => t.length > 2));
+        const tokensB = new Set(normalizeDesc(b).split(' ').filter(t => t.length > 2));
+        if (tokensA.size === 0 || tokensB.size === 0) return 0;
+        
+        const intersection = new Set([...tokensA].filter(x => tokensB.has(x)));
+        const union = new Set([...tokensA, ...tokensB]);
+        const jaccard = intersection.size / union.size;
+        
+        // Prefix bonus
+        const normA = normalizeDesc(a);
+        const normB = normalizeDesc(b);
+        const prefixLen = Math.min(normA.length, normB.length, 30);
+        const prefixMatch = normA.substring(0, prefixLen) === normB.substring(0, prefixLen) ? 0.2 : 0;
+        
+        return Math.min(jaccard + prefixMatch, 1);
+      };
+      
+      // Canonical items with fuzzy matching
+      const canonicalItems: Array<{
         description: string;
+        normalizedKey: string;
         unit: string;
         suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
-      }>();
+      }> = [];
       
-      const supplierNames = quotations.map(q => q.supplier.name);
+      const SIMILARITY_THRESHOLD = 0.65;
       
       quotations.forEach(q => {
         const supplierName = q.supplier.name;
         (q.items || []).forEach((item: any) => {
-          // Normalize description for matching
           const rawDesc = (item.description || '').trim();
           if (!rawDesc) return;
           
-          const normalizedKey = rawDesc.toLowerCase().replace(/\s+/g, ' ').substring(0, 60);
           const itemUnit = (item.unit || 'EA').toUpperCase();
-          
-          if (!itemMap.has(normalizedKey)) {
-            itemMap.set(normalizedKey, {
-              description: rawDesc.substring(0, 80),
-              unit: itemUnit,
-              suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' }]))
-            });
-          }
-          
-          const entry = itemMap.get(normalizedKey)!;
           const unitPrice = parseNumericValue(item.unitPrice);
           const quantity = parseNumericValue(item.quantity) || 1;
           const total = parseNumericValue(item.totalPrice) || (unitPrice * quantity);
           
-          entry.suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
-          // Update the main unit if this one is more specific
-          if (itemUnit !== 'EA') {
-            entry.unit = itemUnit;
+          // Find best matching canonical item
+          let bestMatch = -1;
+          let bestScore = 0;
+          for (let i = 0; i < canonicalItems.length; i++) {
+            const score = similarity(rawDesc, canonicalItems[i].description);
+            if (score > bestScore && score >= SIMILARITY_THRESHOLD) {
+              bestScore = score;
+              bestMatch = i;
+            }
+          }
+          
+          if (bestMatch >= 0) {
+            // Add to existing canonical item
+            canonicalItems[bestMatch].suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
+            // Use longer description as canonical
+            if (rawDesc.length > canonicalItems[bestMatch].description.length) {
+              canonicalItems[bestMatch].description = rawDesc.substring(0, 100);
+            }
+          } else {
+            // Create new canonical item
+            const newItem = {
+              description: rawDesc.substring(0, 100),
+              normalizedKey: normalizeDesc(rawDesc),
+              unit: itemUnit,
+              suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' }]))
+            };
+            newItem.suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
+            canonicalItems.push(newItem);
           }
         });
       });
       
-      // Convert to array with lowest/avg calculations BASED ON LINE TOTALS (qty × unit price)
-      const result: any[] = [];
-      
-      itemMap.forEach((data, key) => {
-        // Get the unified quantity (should be same across vendors, take first non-zero)
+      // Convert to result array with lowest/avg calculations
+      return canonicalItems.map(data => {
         const quantities = Object.values(data.suppliers).map(s => s.quantity).filter(q => q > 0);
         const quantity = quantities.length > 0 ? quantities[0] : 1;
         
-        // Calculate line totals (qty × unitPrice) for each vendor for comparison
         const lineTotals = Object.values(data.suppliers)
           .map(s => s.unitPrice > 0 ? (quantity * s.unitPrice) : 0)
           .filter(t => t > 0);
@@ -593,22 +631,19 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         const lowestTotal = lineTotals.length > 0 ? Math.min(...lineTotals) : 0;
         const averageTotal = lineTotals.length > 0 ? lineTotals.reduce((a, b) => a + b, 0) / lineTotals.length : 0;
         
-        // Find which supplier has the lowest line total
         const lowestSupplier = Object.entries(data.suppliers)
           .find(([_, v]) => v.unitPrice > 0 && (quantity * v.unitPrice) === lowestTotal)?.[0] || '';
         
-        result.push({
+        return {
           item: data.description,
-          quantity,           // Unified quantity for the item
-          unit: data.unit,    // Unit of measure (EA, MTR, SET, etc.)
+          quantity,
+          unit: data.unit,
           suppliers: data.suppliers,
           lowestSupplier,
-          lowestTotal,        // Lowest line total (qty × unit price) - used for comparison
-          averageTotal        // Average line total - used for reference
-        });
+          lowestTotal,
+          averageTotal
+        };
       });
-      
-      return result;
     };
     
     const itemComparisonMatrix = buildItemComparisonMatrix(validatedQuotations);

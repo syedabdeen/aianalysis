@@ -11,22 +11,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import jsPDF from 'jspdf';
 import { 
   Upload, FileText, X, Sparkles, Download, FileSpreadsheet,
   Award, AlertTriangle, CheckCircle, TrendingUp, DollarSign,
-  Clock, Shield, Loader2, Save, ArrowLeft, Eye
+  Clock, Shield, Loader2, Save, ArrowLeft, Eye, List
 } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { 
+  generateOfferAnalysisPDF, 
+  generateOfferAnalysisExcel,
+  getSupplierColumns,
+  type ItemComparisonEntry,
+  type AnalysisResult
+} from '@/lib/exports/offerAnalysisExport';
 
 // Max file size: 2MB per file
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
@@ -37,24 +36,6 @@ interface UploadedFile {
   preview?: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   extractedData?: any;
-}
-
-interface ItemComparisonEntry {
-  item: string;
-  quantity: number;
-  unit: string;
-  suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
-  lowestSupplier: string;
-  lowestTotal: number;
-  averageTotal: number;
-}
-
-interface AnalysisResult {
-  technicalComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; score?: number }> }>;
-  commercialComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; isLowest?: boolean; isFastest?: boolean }> }>;
-  itemComparison?: Array<{ item: string; suppliers: Record<string, { unitPrice?: number; total?: number; quantity?: number }>; lowestSupplier?: string }>;
-  ranking: Array<{ supplierName: string; technicalScore: number; commercialScore: number; overallScore: number; recommendation: string; risks: string[] }>;
-  summary: { lowestEvaluated: string; bestValue: string; recommendation: string; notes: string[] };
 }
 
 export default function OfferAnalysisPage() {
@@ -79,9 +60,9 @@ export default function OfferAnalysisPage() {
   const [isSaved, setIsSaved] = useState(false);
   const [isViewMode, setIsViewMode] = useState(false);
   const [savedReportRef, setSavedReportRef] = useState<string>('');
-  
-  // Save dialog state
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
+
+  // Get canonical supplier columns
+  const supplierColumns = analysisResult ? getSupplierColumns(analysisResult) : [];
 
   // Handle viewing saved report
   useEffect(() => {
@@ -93,7 +74,8 @@ export default function OfferAnalysisPage() {
       if (viewReport.analysisData?.extractedQuotations) {
         setExtractedQuotations(viewReport.analysisData.extractedQuotations);
       }
-      setActiveTab('technical');
+      // Default to items tab when viewing saved report
+      setActiveTab('items');
       setIsViewMode(true);
       setIsSaved(true);
       setSavedReportRef(viewReport.sequenceNumber || '');
@@ -103,7 +85,6 @@ export default function OfferAnalysisPage() {
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Prevent drag events during analysis
     if (isAnalyzing) return;
     setDragActive(e.type === 'dragenter' || e.type === 'dragover');
   }, [isAnalyzing]);
@@ -111,14 +92,12 @@ export default function OfferAnalysisPage() {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Prevent drops during analysis
     if (isAnalyzing) return;
     setDragActive(false);
     handleFiles(Array.from(e.dataTransfer.files));
   }, [isAnalyzing]);
 
   const handleFiles = (files: File[]) => {
-    // Prevent file handling during analysis
     if (isAnalyzing) return;
     
     const newFiles: UploadedFile[] = [];
@@ -207,16 +186,12 @@ export default function OfferAnalysisPage() {
       setAnalysisResult(data.analysis);
       setAnalysisProgress(100);
       setProgressMessage('Analysis complete!');
-      setActiveTab('technical');
+      // Default to items tab after analysis
+      setActiveTab('items');
       setIsSaved(false);
       setSavedReportRef('');
       
       toast({ title: 'Analysis Complete', description: 'All quotations analyzed successfully' });
-      
-      // Show save dialog after analysis completes (like Market Analysis)
-      setTimeout(() => {
-        setShowSaveDialog(true);
-      }, 500);
       
     } catch (error: any) {
       console.error('Analysis error:', error);
@@ -235,8 +210,7 @@ export default function OfferAnalysisPage() {
   const handleSaveReport = async (): Promise<string | null> => {
     if (!analysisResult) return null;
     
-    const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
-    const inputSummary = `${suppliers.length} Vendors compared`;
+    const inputSummary = `${supplierColumns.length} Vendors compared`;
     
     const dataToSave = {
       ...analysisResult,
@@ -254,7 +228,6 @@ export default function OfferAnalysisPage() {
       
       setIsSaved(true);
       setSavedReportRef(saved.sequenceNumber);
-      setShowSaveDialog(false);
       
       toast({
         title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
@@ -265,7 +238,7 @@ export default function OfferAnalysisPage() {
     } catch (error: any) {
       console.error('Save report error:', error);
       toast({
-        title: language === 'ar' ? 'خطأ' : 'Error',
+        title: language === 'ar' ? 'خطأ' : 'Save Failed',
         description: error.message || 'Failed to save report. Please try again.',
         variant: 'destructive',
       });
@@ -273,482 +246,39 @@ export default function OfferAnalysisPage() {
     }
   };
 
-  const handleSaveAndClose = async () => {
-    const saved = await handleSaveReport();
-    if (saved) {
-      // Navigate to reports page after saving
-      setTimeout(() => navigate('/reports'), 500);
-    }
-  };
-
-  const handleSkipSave = () => {
-    setShowSaveDialog(false);
-  };
-
-  const loadImageForPDF = (url: string): Promise<HTMLImageElement | null> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.crossOrigin = 'Anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = url;
-    });
-  };
-
+  // Download PDF - auto-saves first if not saved
   const downloadPDF = async () => {
     if (!analysisResult) return;
     
-    // Auto-save if not already saved
+    // Auto-save if not already saved (must succeed before downloading)
     let reportRef = savedReportRef;
     if (!isSaved && !isViewMode) {
       const savedRef = await handleSaveReport();
-      if (savedRef) {
-        reportRef = savedRef;
+      if (!savedRef) {
+        // Save failed - don't proceed with download
+        toast({
+          title: language === 'ar' ? 'خطأ' : 'Cannot Download',
+          description: language === 'ar' ? 'يجب حفظ التقرير أولاً' : 'Report must be saved first. Please try again.',
+          variant: 'destructive',
+        });
+        return;
       }
+      reportRef = savedRef;
     }
     
-    const doc = new jsPDF('l', 'mm', 'a4');
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 15;
-    let yPos = 15;
-    
-    const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
-    
-    const checkNewPage = (requiredSpace: number) => {
-      if (yPos + requiredSpace > pageHeight - 20) {
-        doc.addPage();
-        yPos = 15;
-        return true;
-      }
-      return false;
-    };
-    
-    // Use saved report reference or generate one
     const pdfReportRef = reportRef || `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
-    const currentDate = new Date();
-    const dateStr = currentDate.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const timeStr = currentDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
     
-    // ===== HEADER SECTION WITH LOGO =====
-    let logoOffset = 0;
-    if (settings.logo_url) {
-      try {
-        const logoImg = await loadImageForPDF(settings.logo_url);
-        if (logoImg) {
-          doc.addImage(logoImg, 'JPEG', margin, yPos - 5, 25, 15);
-          logoOffset = 30;
-        }
-      } catch (error) {
-        console.warn('Failed to load logo:', error);
+    await generateOfferAnalysisPDF(
+      analysisResult,
+      itemComparisonMatrix,
+      extractedQuotations,
+      pdfReportRef,
+      {
+        companyName: settings.company_name_en || 'Company Name',
+        companyAddress: settings.address_en,
+        logoUrl: settings.logo_url,
       }
-    }
-
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text(settings.company_name_en || 'Company Name', margin + logoOffset, yPos);
-    
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`Date: ${dateStr}`, pageWidth - margin, yPos, { align: 'right' });
-    yPos += 5;
-    doc.text(`Time: ${timeStr}`, pageWidth - margin, yPos, { align: 'right' });
-    
-    if (settings.address_en) {
-      doc.setFontSize(9);
-      doc.text(settings.address_en, margin + logoOffset, yPos);
-    }
-    yPos += 8;
-    
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.5);
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 8;
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`Report Reference: ${pdfReportRef}`, margin, yPos);
-    yPos += 10;
-    
-    // ===== TITLE =====
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('QUOTATION COMPARATIVE STATEMENT', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 12;
-    
-    // ===== 1. EXECUTIVE SUMMARY =====
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text('1. Executive Summary', margin, yPos);
-    yPos += 6;
-    
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    const summaryText = analysisResult.summary?.recommendation || 'No summary available.';
-    const summaryLines = doc.splitTextToSize(summaryText, pageWidth - margin * 2);
-    doc.text(summaryLines.slice(0, 4), margin, yPos);
-    yPos += Math.min(summaryLines.length, 4) * 4 + 8;
-    
-    // ===== 2. COMMERCIAL AND TECHNICAL TERMS =====
-    checkNewPage(60);
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text('2. Commercial and Technical Terms', margin, yPos);
-    yPos += 8;
-    
-    const paramColWidth = 50;
-    const vendorColWidth = (pageWidth - margin * 2 - paramColWidth) / suppliers.length;
-    const rowHeight = 8;
-    
-    doc.setFillColor(230, 230, 230);
-    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Parameter', margin + 2, yPos);
-    suppliers.forEach((supplier, i) => {
-      const xPos = margin + paramColWidth + (i * vendorColWidth);
-      doc.text(supplier.substring(0, 20), xPos + 2, yPos, { maxWidth: vendorColWidth - 4 });
-    });
-    yPos += rowHeight;
-    
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.3);
-    doc.line(margin, yPos - 3, pageWidth - margin, yPos - 3);
-    
-    const allTerms = [
-      ...analysisResult.commercialComparison.map(row => ({ ...row, type: 'commercial' })),
-      ...analysisResult.technicalComparison.slice(0, 4).map(row => ({ ...row, type: 'technical' }))
-    ];
-    
-    doc.setFont('helvetica', 'normal');
-    allTerms.forEach((row, idx) => {
-      checkNewPage(rowHeight + 5);
-      
-      if (idx % 2 === 0) {
-        doc.setFillColor(248, 248, 248);
-        doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-      }
-      
-      doc.setFontSize(8);
-      doc.text(row.criteria, margin + 2, yPos, { maxWidth: paramColWidth - 4 });
-      
-      suppliers.forEach((supplier, i) => {
-        const val = row.suppliers[supplier];
-        const xPos = margin + paramColWidth + (i * vendorColWidth);
-        
-        if ((val as any)?.isLowest) {
-          doc.setFillColor(198, 246, 213);
-          doc.rect(xPos, yPos - 5, vendorColWidth, rowHeight, 'F');
-          doc.setFont('helvetica', 'bold');
-        }
-        
-        const displayVal = val?.value || ((val as any)?.score ? `${(val as any).score}/100` : 'N/A');
-        doc.text(String(displayVal).substring(0, 25), xPos + 2, yPos, { maxWidth: vendorColWidth - 4 });
-        doc.setFont('helvetica', 'normal');
-      });
-      
-      yPos += rowHeight;
-    });
-    
-    doc.setDrawColor(150, 150, 150);
-    doc.setLineWidth(0.1);
-    doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
-    yPos += 12;
-    
-    // ===== 3. ITEM-WISE PRICE COMPARISON =====
-    if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
-      checkNewPage(60);
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.text('3. Item-wise Price Comparison', margin, yPos);
-      yPos += 8;
-      
-      const colNo = 8;
-      const colItem = 38;
-      const colQty = 12;
-      const colUnit = 10;
-      const colLowest = 20;
-      const colAvg = 20;
-      const fixedColsWidth = colNo + colItem + colQty + colUnit + colLowest + colAvg;
-      const availableForVendors = pageWidth - margin * 2 - fixedColsWidth;
-      const colVendorWidth = availableForVendors / suppliers.length;
-      const colRate = colVendorWidth * 0.45;
-      const colAmount = colVendorWidth * 0.55;
-      
-      doc.setFillColor(220, 220, 220);
-      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-      doc.setFontSize(6);
-      doc.setFont('helvetica', 'bold');
-      
-      let headerX = margin + 1;
-      doc.text('#', headerX, yPos);
-      headerX += colNo;
-      doc.text('Item Description', headerX, yPos);
-      headerX += colItem;
-      doc.text('Qty', headerX, yPos);
-      headerX += colQty;
-      doc.text('Unit', headerX, yPos);
-      headerX += colUnit;
-      
-      suppliers.forEach((supplier, i) => {
-        const vendorX = margin + colNo + colItem + colQty + colUnit + (i * colVendorWidth);
-        doc.text(supplier.substring(0, 14), vendorX + 1, yPos, { maxWidth: colVendorWidth - 2 });
-      });
-      
-      const lowestX = margin + colNo + colItem + colQty + colUnit + (suppliers.length * colVendorWidth);
-      doc.setFillColor(255, 255, 200);
-      doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
-      doc.setTextColor(0, 0, 0);
-      doc.text('Lowest', lowestX + 1, yPos);
-      
-      const avgX = lowestX + colLowest;
-      doc.setFillColor(200, 220, 255);
-      doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
-      doc.text('Avg', avgX + 1, yPos);
-      
-      yPos += rowHeight;
-      
-      doc.setFillColor(235, 235, 235);
-      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight - 1, 'F');
-      doc.setFontSize(5);
-      
-      headerX = margin + colNo + colItem + colQty + colUnit;
-      suppliers.forEach(() => {
-        doc.text('Rate', headerX + 1, yPos);
-        doc.text('Amount', headerX + colRate + 1, yPos);
-        headerX += colVendorWidth;
-      });
-      
-      doc.setFillColor(255, 255, 200);
-      doc.rect(lowestX, yPos - 5, colLowest, rowHeight - 1, 'F');
-      doc.text('(Total)', lowestX + 1, yPos);
-      doc.setFillColor(200, 220, 255);
-      doc.rect(avgX, yPos - 5, colAvg, rowHeight - 1, 'F');
-      doc.text('(Total)', avgX + 1, yPos);
-      
-      yPos += rowHeight;
-      
-      doc.setDrawColor(0, 0, 0);
-      doc.setLineWidth(0.3);
-      doc.line(margin, yPos - 4, pageWidth - margin, yPos - 4);
-      
-      doc.setFont('helvetica', 'normal');
-      itemComparisonMatrix.slice(0, 25).forEach((item, idx) => {
-        checkNewPage(rowHeight + 5);
-        
-        if (idx % 2 === 0) {
-          doc.setFillColor(250, 250, 250);
-          doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-        }
-        
-        const qty = item.quantity || 1;
-        const unit = item.unit || 'EA';
-        
-        let xPos = margin + 1;
-        doc.setFontSize(6);
-        doc.setTextColor(0, 0, 0);
-        doc.text(String(idx + 1), xPos, yPos);
-        xPos += colNo;
-        doc.text(String(item.item || '').substring(0, 22), xPos, yPos, { maxWidth: colItem - 2 });
-        xPos += colItem;
-        doc.text(String(qty), xPos, yPos);
-        xPos += colQty;
-        doc.text(unit, xPos, yPos);
-        xPos += colUnit;
-        
-        suppliers.forEach((supplier) => {
-          const supplierData = item.suppliers?.[supplier];
-          const unitPrice = supplierData?.unitPrice || 0;
-          const amount = qty * unitPrice;
-          const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
-          
-          if (isLowest) {
-            doc.setFillColor(198, 246, 213);
-            doc.rect(xPos, yPos - 5, colVendorWidth, rowHeight, 'F');
-            doc.setFont('helvetica', 'bold');
-          }
-          
-          doc.text(unitPrice > 0 ? unitPrice.toLocaleString() : '-', xPos + 1, yPos);
-          doc.text(amount > 0 ? amount.toLocaleString() : '-', xPos + colRate + 1, yPos);
-          doc.setFont('helvetica', 'normal');
-          xPos += colVendorWidth;
-        });
-        
-        doc.setFillColor(255, 255, 200);
-        doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
-        doc.setFont('helvetica', 'bold');
-        doc.text((item.lowestTotal || 0) > 0 ? (item.lowestTotal || 0).toLocaleString() : '-', lowestX + 1, yPos);
-        
-        doc.setFillColor(200, 220, 255);
-        doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
-        doc.setFont('helvetica', 'normal');
-        doc.text((item.averageTotal || 0) > 0 ? Math.round(item.averageTotal || 0).toLocaleString() : '-', avgX + 1, yPos);
-        
-        yPos += rowHeight;
-      });
-      
-      doc.setDrawColor(150, 150, 150);
-      doc.setLineWidth(0.2);
-      doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
-      
-      if (itemComparisonMatrix.length > 25) {
-        yPos += 4;
-        doc.setFontSize(6);
-        doc.setTextColor(100, 100, 100);
-        doc.text(`... and ${itemComparisonMatrix.length - 25} more items (see Excel export for complete list)`, margin, yPos);
-      }
-      
-      yPos += 12;
-    }
-    
-    // ===== 3B. SUBTOTAL / VAT / TOTAL SUMMARY =====
-    if (extractedQuotations && extractedQuotations.length > 0) {
-      checkNewPage(40);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      doc.text('Price Summary (Subtotal, Tax, Total)', margin, yPos);
-      yPos += 6;
-      
-      const summaryRows = ['Subtotal', 'Tax/VAT', 'Grand Total'];
-      const summaryParamWidth = 35;
-      const summaryVendorWidth = (pageWidth - margin * 2 - summaryParamWidth) / suppliers.length;
-      
-      doc.setFillColor(240, 240, 240);
-      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-      doc.setFontSize(7);
-      doc.setFont('helvetica', 'bold');
-      doc.text('', margin + 2, yPos);
-      suppliers.forEach((supplier, i) => {
-        const xPos = margin + summaryParamWidth + (i * summaryVendorWidth);
-        doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: summaryVendorWidth - 4 });
-      });
-      yPos += rowHeight;
-      
-      doc.setFont('helvetica', 'normal');
-      summaryRows.forEach((rowLabel, rowIdx) => {
-        checkNewPage(rowHeight + 5);
-        
-        const isTotal = rowLabel === 'Grand Total';
-        if (isTotal) {
-          doc.setFillColor(230, 245, 230);
-          doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-          doc.setFont('helvetica', 'bold');
-        } else if (rowIdx % 2 === 0) {
-          doc.setFillColor(250, 250, 250);
-          doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-        }
-        
-        doc.setFontSize(7);
-        doc.text(rowLabel, margin + 2, yPos);
-        
-        const totals = extractedQuotations.map(q => q.commercial?.total || 0);
-        const minTotal = Math.min(...totals.filter(t => t > 0));
-        
-        suppliers.forEach((supplier, i) => {
-          const q = extractedQuotations.find(eq => eq.supplier?.name === supplier);
-          const xPos = margin + summaryParamWidth + (i * summaryVendorWidth);
-          let value = 0;
-          
-          if (rowLabel === 'Subtotal') {
-            value = q?.commercial?.subtotal || 0;
-          } else if (rowLabel === 'Tax/VAT') {
-            value = q?.commercial?.tax || 0;
-          } else if (rowLabel === 'Grand Total') {
-            value = q?.commercial?.total || 0;
-          }
-          
-          if (isTotal && value > 0 && value === minTotal) {
-            doc.setFillColor(198, 246, 213);
-            doc.rect(xPos, yPos - 5, summaryVendorWidth, rowHeight, 'F');
-          }
-          
-          const currency = q?.commercial?.currency || 'AED';
-          doc.text(value > 0 ? `${currency} ${value.toLocaleString()}` : '-', xPos + 2, yPos);
-        });
-        
-        doc.setFont('helvetica', 'normal');
-        yPos += rowHeight;
-      });
-      
-      yPos += 10;
-    }
-    
-    // ===== 4. FINAL RECOMMENDATION =====
-    checkNewPage(50);
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text('4. Final Recommendation', margin, yPos);
-    yPos += 8;
-    
-    doc.setFillColor(240, 249, 255);
-    doc.setDrawColor(49, 130, 206);
-    doc.setLineWidth(0.5);
-    doc.rect(margin, yPos - 3, pageWidth - margin * 2, 35, 'FD');
-    
-    doc.setFontSize(9);
-    yPos += 4;
-    doc.setFont('helvetica', 'bold');
-    doc.text('Best Value Vendor:', margin + 5, yPos);
-    doc.setFont('helvetica', 'normal');
-    doc.text(analysisResult.summary?.bestValue || 'N/A', margin + 50, yPos);
-    
-    yPos += 7;
-    doc.setFont('helvetica', 'bold');
-    doc.text('Lowest Price Vendor:', margin + 5, yPos);
-    doc.setFont('helvetica', 'normal');
-    doc.text(analysisResult.summary?.lowestEvaluated || 'N/A', margin + 50, yPos);
-    
-    yPos += 7;
-    doc.setFont('helvetica', 'bold');
-    doc.text('Justification:', margin + 5, yPos);
-    yPos += 5;
-    doc.setFont('helvetica', 'normal');
-    const justificationLines = doc.splitTextToSize(
-      analysisResult.summary?.recommendation || 'Manual review recommended.',
-      pageWidth - margin * 2 - 15
     );
-    doc.text(justificationLines.slice(0, 2), margin + 5, yPos);
-    
-    yPos += 20;
-    
-    // ===== SIGNATURE BLOCK =====
-    checkNewPage(40);
-    yPos += 10;
-    
-    const sigBoxWidth = (pageWidth - margin * 2 - 20) / 3;
-    const sigBoxHeight = 25;
-    
-    doc.setFontSize(8);
-    doc.setDrawColor(150, 150, 150);
-    doc.setLineWidth(0.2);
-    
-    doc.rect(margin, yPos, sigBoxWidth, sigBoxHeight);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Prepared By:', margin + 3, yPos + 5);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Name: _______________', margin + 3, yPos + 12);
-    doc.text('Date: _______________', margin + 3, yPos + 18);
-    doc.text('Sign: _______________', margin + 3, yPos + 23);
-    
-    const verifyX = margin + sigBoxWidth + 10;
-    doc.rect(verifyX, yPos, sigBoxWidth, sigBoxHeight);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Verified By:', verifyX + 3, yPos + 5);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Name: _______________', verifyX + 3, yPos + 12);
-    doc.text('Date: _______________', verifyX + 3, yPos + 18);
-    doc.text('Sign: _______________', verifyX + 3, yPos + 23);
-    
-    const approveX = margin + (sigBoxWidth + 10) * 2;
-    doc.rect(approveX, yPos, sigBoxWidth, sigBoxHeight);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Approved By:', approveX + 3, yPos + 5);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Name: _______________', approveX + 3, yPos + 12);
-    doc.text('Date: _______________', approveX + 3, yPos + 18);
-    doc.text('Sign: _______________', approveX + 3, yPos + 23);
-    
-    doc.save(`quotation-analysis-${pdfReportRef}-${dateStr.replace(/\//g, '-')}.pdf`);
     
     toast({
       title: language === 'ar' ? 'تم التحميل' : 'PDF Downloaded',
@@ -756,79 +286,34 @@ export default function OfferAnalysisPage() {
     });
   };
 
+  // Download Excel - auto-saves first if not saved
   const downloadExcel = async () => {
     if (!analysisResult) return;
     
-    // Auto-save if not already saved
+    // Auto-save if not already saved (must succeed before downloading)
     let reportRef = savedReportRef;
     if (!isSaved && !isViewMode) {
       const savedRef = await handleSaveReport();
-      if (savedRef) {
-        reportRef = savedRef;
+      if (!savedRef) {
+        // Save failed - don't proceed with download
+        toast({
+          title: language === 'ar' ? 'خطأ' : 'Cannot Download',
+          description: language === 'ar' ? 'يجب حفظ التقرير أولاً' : 'Report must be saved first. Please try again.',
+          variant: 'destructive',
+        });
+        return;
       }
+      reportRef = savedRef;
     }
     
-    const pdfReportRef = reportRef || `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
+    const excelReportRef = reportRef || `OA-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`;
     
-    let csv = 'QUOTATION COMPARATIVE STATEMENT\n';
-    csv += `Report Reference,${pdfReportRef}\n`;
-    csv += `Generated,${new Date().toLocaleString()}\n\n`;
-    
-    const suppliers = Object.keys(analysisResult.commercialComparison[0]?.suppliers || {});
-    
-    csv += 'COMMERCIAL COMPARISON\n';
-    csv += `Criteria,${suppliers.join(',')}\n`;
-    analysisResult.commercialComparison.forEach(row => {
-      csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'}"`).join(',')}\n`;
-    });
-    
-    csv += '\nTECHNICAL COMPARISON\n';
-    csv += `Criteria,${suppliers.join(',')}\n`;
-    analysisResult.technicalComparison.forEach(row => {
-      csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'} (${row.suppliers[s]?.score || 0})"`).join(',')}\n`;
-    });
-    
-    if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
-      csv += '\nITEM-WISE PRICE COMPARISON\n';
-      csv += `#,Item Description,Qty,Unit,${suppliers.flatMap(s => [`${s} Rate`, `${s} Amount`]).join(',')},Lowest Total,Average Total\n`;
-      itemComparisonMatrix.forEach((item, idx) => {
-        const qty = item.quantity || 1;
-        const unit = item.unit || 'EA';
-        const vendorData = suppliers.flatMap(s => {
-          const rate = item.suppliers?.[s]?.unitPrice || 0;
-          const amount = qty * rate;
-          return [rate > 0 ? rate : '-', amount > 0 ? amount : '-'];
-        }).join(',');
-        csv += `${idx + 1},"${(item.item || '').replace(/"/g, "'")}",${qty},${unit},${vendorData},${(item.lowestTotal || 0) > 0 ? item.lowestTotal : '-'},${(item.averageTotal || 0) > 0 ? Math.round(item.averageTotal || 0) : '-'}\n`;
-      });
-    }
-    
-    if (extractedQuotations && extractedQuotations.length > 0) {
-      csv += '\nPRICE SUMMARY\n';
-      csv += `Parameter,${suppliers.join(',')}\n`;
-      ['Subtotal', 'Tax/VAT', 'Grand Total'].forEach(label => {
-        const values = suppliers.map(s => {
-          const q = extractedQuotations.find(eq => eq.supplier?.name === s);
-          let val = 0;
-          if (label === 'Subtotal') val = q?.commercial?.subtotal || 0;
-          else if (label === 'Tax/VAT') val = q?.commercial?.tax || 0;
-          else val = q?.commercial?.total || 0;
-          return val > 0 ? val : '-';
-        }).join(',');
-        csv += `"${label}",${values}\n`;
-      });
-    }
-    
-    csv += '\nRECOMMENDATION\n';
-    csv += `Best Value,"${analysisResult.summary.bestValue}"\n`;
-    csv += `Lowest Price,"${analysisResult.summary.lowestEvaluated}"\n`;
-    csv += `Recommendation,"${analysisResult.summary.recommendation?.replace(/"/g, "'") || ''}"\n`;
-    
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `quotation-analysis-${pdfReportRef}.csv`;
-    link.click();
+    generateOfferAnalysisExcel(
+      analysisResult,
+      itemComparisonMatrix,
+      extractedQuotations,
+      excelReportRef
+    );
     
     toast({
       title: language === 'ar' ? 'تم التحميل' : 'Excel Downloaded',
@@ -857,7 +342,6 @@ export default function OfferAnalysisPage() {
     window.history.replaceState({}, document.title);
   };
 
-  // Handle upload zone click - prevent during analysis
   const handleUploadZoneClick = () => {
     if (isAnalyzing) return;
     document.getElementById('file-upload')?.click();
@@ -866,41 +350,6 @@ export default function OfferAnalysisPage() {
   return (
     <AnalyzerLayout>
       <div className="space-y-6">
-        {/* Save Dialog */}
-        <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Save className="h-5 w-5 text-primary" />
-                {language === 'ar' ? 'حفظ التقرير' : 'Save Report'}
-              </DialogTitle>
-              <DialogDescription>
-                {language === 'ar' 
-                  ? 'هل تريد حفظ هذا التقرير في مركز التقارير؟ سيتم إنشاء رقم مرجعي فريد.'
-                  : 'Would you like to save this report to the Reports Center? A unique reference number will be generated.'}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2 sm:gap-0">
-              <Button variant="outline" onClick={handleSkipSave} disabled={isSaving}>
-                {language === 'ar' ? 'ليس الآن' : 'Not now'}
-              </Button>
-              <Button onClick={handleSaveAndClose} disabled={isSaving} className="gap-2">
-                {isSaving ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {language === 'ar' ? 'جاري الحفظ...' : 'Saving...'}
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4" />
-                    {language === 'ar' ? 'حفظ' : 'Save'}
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
         {/* View Mode Banner */}
         {isViewMode && viewReport && (
           <div className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
@@ -971,8 +420,9 @@ export default function OfferAnalysisPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="grid w-full grid-cols-4 h-auto p-1">
+          <TabsList className="grid w-full grid-cols-5 h-auto p-1">
             <TabsTrigger value="upload"><Upload className="h-4 w-4 mr-2" />{language === 'ar' ? 'التحميل' : 'Upload'}</TabsTrigger>
+            <TabsTrigger value="items" disabled={!analysisResult}><List className="h-4 w-4 mr-2" />{language === 'ar' ? 'البنود' : 'Items'}</TabsTrigger>
             <TabsTrigger value="technical" disabled={!analysisResult}><Shield className="h-4 w-4 mr-2" />{language === 'ar' ? 'الفنية' : 'Technical'}</TabsTrigger>
             <TabsTrigger value="commercial" disabled={!analysisResult}><DollarSign className="h-4 w-4 mr-2" />{language === 'ar' ? 'التجارية' : 'Commercial'}</TabsTrigger>
             <TabsTrigger value="recommendation" disabled={!analysisResult}><Award className="h-4 w-4 mr-2" />{language === 'ar' ? 'التوصية' : 'Recommendation'}</TabsTrigger>
@@ -1077,6 +527,119 @@ export default function OfferAnalysisPage() {
             </div>
           </TabsContent>
 
+          {/* NEW: Items Tab - Line-by-line item comparison */}
+          <TabsContent value="items">
+            {itemComparisonMatrix && itemComparisonMatrix.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <List className="h-5 w-5" />
+                    {language === 'ar' ? 'مقارنة البنود' : 'Item-wise Comparison'}
+                    <Badge variant="secondary">{itemComparisonMatrix.length} items</Badge>
+                  </CardTitle>
+                  <CardDescription>
+                    {language === 'ar' 
+                      ? 'مقارنة تفصيلية لكل بند عبر جميع الموردين' 
+                      : 'Detailed line-by-line comparison across all suppliers'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="w-full">
+                    <div className="min-w-[800px]">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/50">
+                            <TableHead className="w-12 font-bold">#</TableHead>
+                            <TableHead className="min-w-[200px] font-bold">{language === 'ar' ? 'الوصف' : 'Description'}</TableHead>
+                            <TableHead className="w-16 font-bold text-center">{language === 'ar' ? 'الكمية' : 'Qty'}</TableHead>
+                            <TableHead className="w-16 font-bold text-center">{language === 'ar' ? 'الوحدة' : 'Unit'}</TableHead>
+                            {supplierColumns.map(supplier => (
+                              <TableHead key={supplier} className="min-w-[120px] font-bold text-center bg-muted/30">
+                                {supplier}
+                              </TableHead>
+                            ))}
+                            <TableHead className="w-24 font-bold text-center bg-green-100 dark:bg-green-900/30">
+                              {language === 'ar' ? 'الأقل' : 'Lowest'}
+                            </TableHead>
+                          </TableRow>
+                          {/* Sub-header for Rate/Amount */}
+                          <TableRow className="bg-muted/30 text-xs">
+                            <TableHead></TableHead>
+                            <TableHead></TableHead>
+                            <TableHead></TableHead>
+                            <TableHead></TableHead>
+                            {supplierColumns.map(supplier => (
+                              <TableHead key={`${supplier}-subhead`} className="text-center p-1">
+                                <div className="flex justify-around text-xs text-muted-foreground">
+                                  <span>{language === 'ar' ? 'السعر' : 'Rate'}</span>
+                                  <span>{language === 'ar' ? 'المبلغ' : 'Amount'}</span>
+                                </div>
+                              </TableHead>
+                            ))}
+                            <TableHead className="text-center text-xs text-muted-foreground">
+                              {language === 'ar' ? 'المبلغ' : 'Amount'}
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {itemComparisonMatrix.map((item, idx) => {
+                            const qty = item.quantity || 1;
+                            return (
+                              <TableRow key={idx} className={idx % 2 === 0 ? 'bg-muted/10' : ''}>
+                                <TableCell className="font-medium">{idx + 1}</TableCell>
+                                <TableCell className="font-medium">{item.item}</TableCell>
+                                <TableCell className="text-center">{qty}</TableCell>
+                                <TableCell className="text-center">{item.unit || 'EA'}</TableCell>
+                                {supplierColumns.map(supplier => {
+                                  const supplierData = item.suppliers?.[supplier];
+                                  const unitPrice = supplierData?.unitPrice || 0;
+                                  const amount = qty * unitPrice;
+                                  const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
+                                  
+                                  return (
+                                    <TableCell 
+                                      key={supplier} 
+                                      className={cn(
+                                        "text-center",
+                                        isLowest && "bg-green-100 dark:bg-green-900/30 font-semibold"
+                                      )}
+                                    >
+                                      {unitPrice > 0 ? (
+                                        <div className="flex justify-around text-sm">
+                                          <span>{unitPrice.toLocaleString()}</span>
+                                          <span className="text-muted-foreground">{amount.toLocaleString()}</span>
+                                        </div>
+                                      ) : (
+                                        <span className="text-muted-foreground">—</span>
+                                      )}
+                                    </TableCell>
+                                  );
+                                })}
+                                <TableCell className="text-center font-semibold bg-green-50 dark:bg-green-900/20">
+                                  {(item.lowestTotal || 0) > 0 ? item.lowestTotal.toLocaleString() : '—'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardContent className="p-8 text-center">
+                  <List className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                  <p className="text-muted-foreground">
+                    {language === 'ar' ? 'لا توجد بنود للمقارنة' : 'No items to compare'}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
           <TabsContent value="technical">
             {analysisResult?.technicalComparison && (
               <Card>
@@ -1086,16 +649,21 @@ export default function OfferAnalysisPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Criteria</TableHead>
-                        {Object.keys(analysisResult.technicalComparison[0]?.suppliers || {}).map(s => <TableHead key={s}>{s}</TableHead>)}
+                        {supplierColumns.map(s => <TableHead key={s}>{s}</TableHead>)}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {analysisResult.technicalComparison.map((row, i) => (
                         <TableRow key={i}>
                           <TableCell className="font-medium">{row.criteria}</TableCell>
-                          {Object.entries(row.suppliers).map(([s, d]) => (
-                            <TableCell key={s}>{d.value} {d.score >= 80 && <CheckCircle className="h-4 w-4 text-green-500 inline ml-1" />}</TableCell>
-                          ))}
+                          {supplierColumns.map(s => {
+                            const d = row.suppliers[s];
+                            return (
+                              <TableCell key={s}>
+                                {d?.value || '—'} {d?.score && d.score >= 80 && <CheckCircle className="h-4 w-4 text-green-500 inline ml-1" />}
+                              </TableCell>
+                            );
+                          })}
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1114,18 +682,21 @@ export default function OfferAnalysisPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Criteria</TableHead>
-                        {Object.keys(analysisResult.commercialComparison[0]?.suppliers || {}).map(s => <TableHead key={s}>{s}</TableHead>)}
+                        {supplierColumns.map(s => <TableHead key={s}>{s}</TableHead>)}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {analysisResult.commercialComparison.map((row, i) => (
                         <TableRow key={i}>
                           <TableCell className="font-medium">{row.criteria}</TableCell>
-                          {Object.entries(row.suppliers).map(([s, d]) => (
-                            <TableCell key={s} className={d.isLowest ? 'text-green-600 font-semibold' : ''}>
-                              {d.value} {d.isLowest && <Badge className="bg-green-500 ml-1">Lowest</Badge>}
-                            </TableCell>
-                          ))}
+                          {supplierColumns.map(s => {
+                            const d = row.suppliers[s];
+                            return (
+                              <TableCell key={s} className={d?.isLowest ? 'text-green-600 font-semibold' : ''}>
+                                {d?.value || '—'} {d?.isLowest && <Badge className="bg-green-500 ml-1">Lowest</Badge>}
+                              </TableCell>
+                            );
+                          })}
                         </TableRow>
                       ))}
                     </TableBody>
