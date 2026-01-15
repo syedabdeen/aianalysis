@@ -124,6 +124,40 @@ export const QuotationComparisonPanel: React.FC<QuotationComparisonPanelProps> =
     }
   });
 
+  // Calculate lowest and average price for each item
+  const itemStats: Record<string, { lowest: number; average: number; lowestVendorId: string }> = {};
+  items.forEach(item => {
+    const prices = receivedVendors
+      .map(v => priceMatrix[v.id]?.[item.id] || 0)
+      .filter(p => p > 0);
+    
+    if (prices.length > 0) {
+      const lowest = Math.min(...prices);
+      const average = prices.reduce((a, b) => a + b, 0) / prices.length;
+      const lowestVendor = receivedVendors.find(v => priceMatrix[v.id]?.[item.id] === lowest);
+      
+      itemStats[item.id] = {
+        lowest,
+        average,
+        lowestVendorId: lowestVendor?.id || ''
+      };
+    }
+  });
+
+  // Find vendor with lowest total (recommended)
+  const recommendedVendor = receivedVendors.length > 0
+    ? receivedVendors.reduce((prev, curr) => 
+        (curr.total_amount || Infinity) < (prev.total_amount || Infinity) ? curr : prev
+      )
+    : null;
+
+  // Calculate overall lowest and average totals
+  const vendorTotals = receivedVendors.map(v => v.total_amount || 0).filter(t => t > 0);
+  const lowestTotal = vendorTotals.length > 0 ? Math.min(...vendorTotals) : 0;
+  const averageTotal = vendorTotals.length > 0 
+    ? vendorTotals.reduce((a, b) => a + b, 0) / vendorTotals.length 
+    : 0;
+
   // Calculate vendor scores for display
   const getOverallScore = (vendor: any) => {
     const tech = vendor.technical_score || 0;
@@ -246,34 +280,64 @@ export const QuotationComparisonPanel: React.FC<QuotationComparisonPanelProps> =
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="sticky left-0 bg-background">{language === 'ar' ? 'العنصر' : 'Item'}</TableHead>
-                        <TableHead className="sticky left-0 bg-background">{language === 'ar' ? 'الكمية' : 'Qty'}</TableHead>
+                        <TableHead className="sticky left-0 bg-background w-10">#</TableHead>
+                        <TableHead className="sticky left-0 bg-background">{language === 'ar' ? 'الوصف' : 'Description'}</TableHead>
+                        <TableHead className="text-center w-16">{language === 'ar' ? 'الكمية' : 'Qty'}</TableHead>
+                        <TableHead className="text-center w-16">{language === 'ar' ? 'الوحدة' : 'Unit'}</TableHead>
                         {receivedVendors.map(vendor => (
-                          <TableHead key={vendor.id} className="text-center min-w-[120px]">
+                          <TableHead key={vendor.id} className="text-center min-w-[140px]">
                             <div className="flex flex-col items-center gap-1">
                               <span className="font-medium">{vendor.vendor?.code}</span>
-                              <span className="text-xs text-muted-foreground truncate max-w-[100px]">
+                              <span className="text-xs text-muted-foreground truncate max-w-[120px]">
                                 {language === 'ar' ? vendor.vendor?.company_name_ar : vendor.vendor?.company_name_en}
                               </span>
+                              {recommendedVendor && vendor.id === recommendedVendor.id && (
+                                <Badge className="bg-green-600 hover:bg-green-700 text-white text-[10px] px-1.5 py-0">
+                                  {language === 'ar' ? 'موصى به' : 'RECOMMENDED'}
+                                </Badge>
+                              )}
                             </div>
                           </TableHead>
                         ))}
+                        {/* Lowest Price Column */}
+                        <TableHead className="text-center min-w-[100px] bg-yellow-100 dark:bg-yellow-900/30">
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="font-bold text-yellow-700 dark:text-yellow-400">
+                              {language === 'ar' ? 'الأدنى' : 'Lowest'}
+                            </span>
+                          </div>
+                        </TableHead>
+                        {/* Average Price Column */}
+                        <TableHead className="text-center min-w-[100px] bg-blue-50 dark:bg-blue-900/20">
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="font-bold text-blue-700 dark:text-blue-400">
+                              {language === 'ar' ? 'المتوسط' : 'Avg'}
+                            </span>
+                          </div>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {items.map(item => (
                         <TableRow key={item.id}>
-                          <TableCell className="sticky left-0 bg-background font-medium">
-                            {item.item_number}. {language === 'ar' ? item.description_ar : item.description_en}
+                          <TableCell className="sticky left-0 bg-background text-center font-medium">
+                            {item.item_number}
                           </TableCell>
-                          <TableCell className="sticky left-0 bg-background">{item.quantity}</TableCell>
+                          <TableCell className="sticky left-0 bg-background">
+                            {language === 'ar' ? item.description_ar : item.description_en}
+                          </TableCell>
+                          <TableCell className="text-center">{item.quantity}</TableCell>
+                          <TableCell className="text-center">{item.unit}</TableCell>
                           {receivedVendors.map(vendor => {
                             const price = priceMatrix[vendor.id]?.[item.id] || 0;
-                            const isLowest = lowestPrices[item.id]?.vendorId === vendor.id;
+                            const isLowest = itemStats[item.id]?.lowestVendorId === vendor.id;
                             return (
-                              <TableCell key={vendor.id} className="text-center">
+                              <TableCell 
+                                key={vendor.id} 
+                                className={`text-center ${isLowest ? 'bg-green-100 dark:bg-green-900/30 font-bold text-green-700 dark:text-green-400' : ''}`}
+                              >
                                 {price > 0 ? (
-                                  <span className={`inline-flex items-center gap-1 ${isLowest ? 'text-green-600 font-medium' : ''}`}>
+                                  <span className="inline-flex items-center justify-center gap-1">
                                     {isLowest && <TrendingDown className="h-3 w-3" />}
                                     {price.toLocaleString()}
                                   </span>
@@ -283,17 +347,37 @@ export const QuotationComparisonPanel: React.FC<QuotationComparisonPanelProps> =
                               </TableCell>
                             );
                           })}
+                          {/* Lowest Price Cell */}
+                          <TableCell className="text-center bg-yellow-50 dark:bg-yellow-900/20 font-bold text-yellow-700 dark:text-yellow-400">
+                            {itemStats[item.id]?.lowest?.toLocaleString() || '-'}
+                          </TableCell>
+                          {/* Average Price Cell */}
+                          <TableCell className="text-center bg-blue-50 dark:bg-blue-900/10 text-blue-700 dark:text-blue-400">
+                            {itemStats[item.id]?.average ? itemStats[item.id].average.toFixed(2) : '-'}
+                          </TableCell>
                         </TableRow>
                       ))}
-                      <TableRow className="bg-muted/50 font-bold">
-                        <TableCell className="sticky left-0 bg-muted/50" colSpan={2}>
-                          {language === 'ar' ? 'الإجمالي' : 'Total'}
+                      {/* Grand Total Row */}
+                      <TableRow className="bg-muted/50 font-bold border-t-2">
+                        <TableCell className="sticky left-0 bg-muted/50" colSpan={4}>
+                          {language === 'ar' ? 'الإجمالي الكلي' : 'GRAND TOTAL'}
                         </TableCell>
                         {receivedVendors.map(vendor => (
-                          <TableCell key={vendor.id} className="text-center">
+                          <TableCell 
+                            key={vendor.id} 
+                            className={`text-center ${recommendedVendor && vendor.id === recommendedVendor.id ? 'bg-green-100 dark:bg-green-900/30 font-bold text-green-700 dark:text-green-400' : ''}`}
+                          >
                             {vendor.total_amount?.toLocaleString() || '-'}
                           </TableCell>
                         ))}
+                        {/* Lowest Total */}
+                        <TableCell className="text-center bg-yellow-100 dark:bg-yellow-900/30 font-bold text-yellow-700 dark:text-yellow-400">
+                          {lowestTotal > 0 ? lowestTotal.toLocaleString() : '-'}
+                        </TableCell>
+                        {/* Average Total */}
+                        <TableCell className="text-center bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400">
+                          {averageTotal > 0 ? averageTotal.toFixed(2) : '-'}
+                        </TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
