@@ -695,11 +695,277 @@ Provide accurate scores, identify the best options clearly, and give actionable 
 
     console.log('Analysis complete');
 
-    // Build reliable item comparison matrix with STRICT matching to prevent false merges
-    const buildItemComparisonMatrix = (quotations: any[]) => {
+    // =========================================================================
+    // AI-POWERED UNIVERSAL ITEM MATCHING
+    // Uses semantic AI matching instead of rule-based string similarity
+    // Handles: word order variations, abbreviations, typos, technical equivalences
+    // =========================================================================
+    
+    interface ItemComparisonRow {
+      item: string;
+      quantity: number;
+      unit: string;
+      suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
+      lowestSupplier: string;
+      lowestTotal: number;
+      averageTotal: number;
+    }
+    
+    // Collect all items from all quotations into a flat list
+    const collectAllItems = (quotations: any[]): Array<{
+      idx: number;
+      supplier: string;
+      description: string;
+      unit: string;
+      unitPrice: number;
+      quantity: number;
+      total: number;
+    }> => {
+      const allItems: Array<{
+        idx: number;
+        supplier: string;
+        description: string;
+        unit: string;
+        unitPrice: number;
+        quantity: number;
+        total: number;
+      }> = [];
+      
+      quotations.forEach(q => {
+        (q.items || []).forEach((item: any) => {
+          const desc = (item.description || '').trim();
+          if (!desc) return;
+          
+          const unitPrice = parseNumericValue(item.unitPrice);
+          const quantity = parseNumericValue(item.quantity) || 1;
+          const total = parseNumericValue(item.totalPrice) || (unitPrice * quantity);
+          
+          allItems.push({
+            idx: allItems.length,
+            supplier: q.supplier.name,
+            description: desc,
+            unit: item.unit || 'EA',
+            unitPrice,
+            quantity,
+            total
+          });
+        });
+      });
+      
+      return allItems;
+    };
+    
+    // AI-powered semantic item grouping
+    const buildItemComparisonMatrixWithAI = async (quotations: any[]): Promise<ItemComparisonRow[]> => {
+      const supplierNames = quotations.map(q => q.supplier.name);
+      const allItems = collectAllItems(quotations);
+      
+      if (allItems.length === 0) return [];
+      
+      console.log(`AI Item Matching: Processing ${allItems.length} items from ${supplierNames.length} suppliers...`);
+      
+      // For small lists, process directly. For large lists, batch.
+      const BATCH_SIZE = 80;
+      const batches: typeof allItems[] = [];
+      for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
+        batches.push(allItems.slice(i, i + BATCH_SIZE));
+      }
+      
+      let allGroups: Array<{
+        canonicalDescription: string;
+        standardUnit: string;
+        itemIds: number[];
+      }> = [];
+      
+      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+        const batch = batches[batchIdx];
+        console.log(`Processing batch ${batchIdx + 1}/${batches.length} (${batch.length} items)...`);
+        
+        try {
+          const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              max_completion_tokens: 4000,
+              messages: [{
+                role: 'system',
+                content: `You are an expert procurement analyst. Group quotation items that refer to the SAME product/material.
+
+UNIVERSAL MATCHING RULES - Apply to ALL procurement categories:
+
+1. IGNORE word order: "Cable XLPE 70mm" = "70mm XLPE Cable" = "XLPE 70mm Cable"
+
+2. Handle ABBREVIATIONS across industries:
+   - Electrical: 1C/SC=Single Core, 4C=Four Core, Cu=Copper, Al=Aluminium/Aluminum, XLPE, PVC, SWA=Steel Wire Armoured, HT=High Tension, LT=Low Tension
+   - Mechanical: SS=Stainless Steel, CS=Carbon Steel, GI=Galvanized Iron, CI=Cast Iron, MS=Mild Steel, HDPE=High Density Polyethylene
+   - Construction: OPC=Ordinary Portland Cement, PPC=Portland Pozzolana Cement, TMT=Thermo Mechanically Treated
+   - General: HD=Heavy Duty, HP=High Pressure, LP=Low Pressure, S/S=Stainless Steel
+
+3. SIZE EQUIVALENCES:
+   - sqmm = mm2 = mm² = square millimeter
+   - DN50 = 2" = 2 inch = 50mm (for pipes)
+   - NB = Nominal Bore
+   - AWG to mm2 conversions are equivalent
+   - 1/2" = 0.5" = 12.7mm
+
+4. UNIT NORMALIZATION:
+   - RM/MTR/M/LM/METER = Meters
+   - EA/PCS/NOS/UNIT/NO/PC/EACH = Each
+   - KG/KGS/KILOGRAM = Kilogram
+   - SET/LOT = Set
+   - SQM/M2 = Square Meter
+
+5. TYPO & REGIONAL TOLERANCE: 
+   - Armoured=Armored, Aluminium=Aluminum, Galvanised=Galvanized, Colour=Color
+   - Minor spelling variations should match
+
+6. TECHNICAL EQUIVALENCE:
+   - Items serving same function with minor wording differences = SAME item
+   - "Junction Box" = "J/B" = "JB"
+   - "Circuit Breaker" = "CB" = "C.B."
+
+7. DO NOT MERGE genuinely different items:
+   - Different sizes (70mm vs 95mm)
+   - Different materials (Copper vs Aluminium)  
+   - Different types (Single Core vs Multi Core)
+   - Different specifications (600V vs 1000V)
+
+Output the clearest, most complete description as the canonical name for each group.`
+              }, {
+                role: 'user',
+                content: `Group these ${batch.length} quotation items by same product. Each item has an ID, supplier, description, and unit.
+
+Items to group:
+${JSON.stringify(batch.map(it => ({
+  id: it.idx,
+  supplier: it.supplier,
+  desc: it.description,
+  unit: it.unit
+})), null, 2)}
+
+Group identical items together. Return the groups.`
+              }],
+              tools: [{
+                type: 'function',
+                function: {
+                  name: 'group_items',
+                  description: 'Group quotation items that are the same product',
+                  parameters: {
+                    type: 'object',
+                    properties: {
+                      groups: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            canonicalDescription: { 
+                              type: 'string', 
+                              description: 'Best/clearest description for this item - use the most complete version' 
+                            },
+                            standardUnit: { 
+                              type: 'string', 
+                              description: 'Normalized unit (MTR, EA, KG, SET, SQM, etc)' 
+                            },
+                            itemIds: { 
+                              type: 'array', 
+                              items: { type: 'number' }, 
+                              description: 'Array of item IDs that are the same product' 
+                            }
+                          },
+                          required: ['canonicalDescription', 'standardUnit', 'itemIds']
+                        }
+                      }
+                    },
+                    required: ['groups']
+                  }
+                }
+              }],
+              tool_choice: { type: 'function', function: { name: 'group_items' } }
+            })
+          });
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`AI grouping failed for batch ${batchIdx + 1}:`, response.status, errorText);
+            throw new Error(`AI grouping failed: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+          
+          if (!toolCall?.function?.arguments) {
+            console.error('No tool call in AI response for batch', batchIdx + 1);
+            throw new Error('No tool call in response');
+          }
+          
+          const groups = JSON.parse(toolCall.function.arguments).groups;
+          console.log(`Batch ${batchIdx + 1}: AI created ${groups.length} item groups`);
+          
+          allGroups = allGroups.concat(groups);
+          
+        } catch (batchError) {
+          console.error(`AI batch ${batchIdx + 1} failed:`, batchError);
+          throw batchError; // Will trigger fallback
+        }
+      }
+      
+      console.log(`AI Item Matching: Created ${allGroups.length} total groups from ${allItems.length} items`);
+      
+      // Build comparison matrix from AI groups
+      return allGroups.map(group => {
+        const suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit: string }> = {};
+        supplierNames.forEach(s => suppliers[s] = { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' });
+        
+        let maxQuantity = 0;
+        group.itemIds.forEach((id: number) => {
+          const item = allItems.find(it => it.idx === id);
+          if (!item) return;
+          
+          // If this supplier doesn't have a price yet, or this one is better
+          if (!suppliers[item.supplier].unitPrice || item.unitPrice > 0) {
+            suppliers[item.supplier] = {
+              unitPrice: item.unitPrice,
+              quantity: item.quantity,
+              total: item.total || (item.unitPrice * item.quantity),
+              unit: item.unit
+            };
+            maxQuantity = Math.max(maxQuantity, item.quantity);
+          }
+        });
+        
+        // Calculate lowest/average from line totals
+        const lineTotals = Object.values(suppliers)
+          .map(s => s.unitPrice > 0 ? (maxQuantity * s.unitPrice) : 0)
+          .filter(t => t > 0);
+        
+        const lowestTotal = lineTotals.length > 0 ? Math.min(...lineTotals) : 0;
+        const averageTotal = lineTotals.length > 0 ? lineTotals.reduce((a, b) => a + b, 0) / lineTotals.length : 0;
+        
+        // Find supplier with lowest
+        const lowestSupplier = Object.entries(suppliers)
+          .filter(([_, v]) => v.unitPrice > 0)
+          .sort((a, b) => (maxQuantity * a[1].unitPrice) - (maxQuantity * b[1].unitPrice))[0]?.[0] || '';
+        
+        return {
+          item: group.canonicalDescription,
+          quantity: maxQuantity || 1,
+          unit: group.standardUnit,
+          suppliers,
+          lowestSupplier,
+          lowestTotal,
+          averageTotal
+        };
+      });
+    };
+    
+    // Fallback: Rule-based matching (original logic)
+    const buildItemComparisonMatrixRuleBased = (quotations: any[]): ItemComparisonRow[] => {
       const supplierNames = quotations.map(q => q.supplier.name);
       
-      // Normalize description for matching - extract critical identifiers
       const normalizeDesc = (desc: string): string => {
         return (desc || '')
           .toLowerCase()
@@ -708,47 +974,34 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           .trim();
       };
       
-      // Extract critical tokens (part numbers, dimensions, specifications)
       const extractCriticalTokens = (desc: string): Set<string> => {
         const normalized = normalizeDesc(desc);
         const tokens = new Set<string>();
-        
-        // Extract alphanumeric codes (like 1CX70, 4CX300, ISO9001)
         const codeMatches = normalized.match(/\b[a-z]*\d+[a-z\d]*\b/gi) || [];
         codeMatches.forEach(m => tokens.add(m.toLowerCase()));
-        
-        // Extract dimension patterns (like 70mm, 300sqmm, 2x4)
         const dimMatches = normalized.match(/\d+(?:\.\d+)?(?:mm|cm|m|sqmm|kv|awg|x\d+)/gi) || [];
         dimMatches.forEach(m => tokens.add(m.toLowerCase()));
-        
         return tokens;
       };
       
-      // Calculate similarity - STRICT matching with high threshold
       const calculateSimilarity = (descA: string, descB: string): { score: number; exactCritical: boolean } => {
         const normA = normalizeDesc(descA);
         const normB = normalizeDesc(descB);
         
-        // Exact match
         if (normA === normB) return { score: 1.0, exactCritical: true };
         
-        // Critical tokens must match for technical items
         const criticalA = extractCriticalTokens(descA);
         const criticalB = extractCriticalTokens(descB);
         
-        // If either has critical tokens, they must overlap significantly
         if (criticalA.size > 0 && criticalB.size > 0) {
           const intersection = new Set([...criticalA].filter(x => criticalB.has(x)));
           const union = new Set([...criticalA, ...criticalB]);
           const criticalOverlap = intersection.size / union.size;
-          
-          // If critical tokens don't match well, don't merge
           if (criticalOverlap < 0.7) {
             return { score: criticalOverlap * 0.5, exactCritical: false };
           }
         }
         
-        // Token-based Jaccard similarity (words only)
         const wordsA = new Set(normA.split(' ').filter(t => t.length > 2));
         const wordsB = new Set(normB.split(' ').filter(t => t.length > 2));
         if (wordsA.size === 0 || wordsB.size === 0) return { score: 0, exactCritical: false };
@@ -760,7 +1013,6 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         return { score: jaccard, exactCritical: criticalA.size > 0 && criticalB.size > 0 };
       };
       
-      // Canonical items with STRICT matching - high threshold to prevent false merges
       const canonicalItems: Array<{
         description: string;
         unit: string;
@@ -768,7 +1020,6 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
       }> = [];
       
-      // VERY HIGH threshold - only merge near-exact matches
       const SIMILARITY_THRESHOLD = 0.92;
       
       quotations.forEach(q => {
@@ -782,17 +1033,13 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           const quantity = parseNumericValue(item.quantity) || 1;
           const total = parseNumericValue(item.totalPrice) || (unitPrice * quantity);
           
-          // Find best matching canonical item (STRICT)
           let bestMatch = -1;
           let bestScore = 0;
           
           for (let i = 0; i < canonicalItems.length; i++) {
-            // Skip if supplier already has this item (don't overwrite)
             if (canonicalItems[i].suppliers[supplierName]?.unitPrice > 0) continue;
             
             const { score } = calculateSimilarity(rawDesc, canonicalItems[i].description);
-            
-            // Only match if score meets threshold
             if (score >= SIMILARITY_THRESHOLD && score > bestScore) {
               bestScore = score;
               bestMatch = i;
@@ -800,14 +1047,11 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           }
           
           if (bestMatch >= 0 && bestScore >= SIMILARITY_THRESHOLD) {
-            // Add to existing canonical item
             canonicalItems[bestMatch].suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
-            // Use longer/more descriptive description as canonical
             if (rawDesc.length > canonicalItems[bestMatch].description.length) {
               canonicalItems[bestMatch].description = rawDesc;
             }
           } else {
-            // Create NEW canonical item (don't merge if uncertain)
             const newItem = {
               description: rawDesc,
               unit: itemUnit,
@@ -820,15 +1064,12 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         });
       });
       
-      console.log(`Created ${canonicalItems.length} canonical items from quotations`);
+      console.log(`Rule-based matching: Created ${canonicalItems.length} canonical items`);
       
-      // Convert to result array with lowest/avg calculations
       return canonicalItems.map(data => {
-        // Use max quantity from any supplier for consistency
         const quantities = Object.values(data.suppliers).map(s => s.quantity).filter(q => q > 0);
         const quantity = quantities.length > 0 ? Math.max(...quantities) : 1;
         
-        // Calculate line totals for suppliers who quoted
         const lineTotals = Object.values(data.suppliers)
           .map(s => s.unitPrice > 0 ? (quantity * s.unitPrice) : 0)
           .filter(t => t > 0);
@@ -836,7 +1077,6 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         const lowestTotal = lineTotals.length > 0 ? Math.min(...lineTotals) : 0;
         const averageTotal = lineTotals.length > 0 ? lineTotals.reduce((a, b) => a + b, 0) / lineTotals.length : 0;
         
-        // Find supplier with lowest total
         const lowestSupplier = Object.entries(data.suppliers)
           .filter(([_, v]) => v.unitPrice > 0)
           .sort((a, b) => (quantity * a[1].unitPrice) - (quantity * b[1].unitPrice))[0]?.[0] || '';
@@ -853,8 +1093,21 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       });
     };
     
-    const itemComparisonMatrix = buildItemComparisonMatrix(validatedQuotations);
-    console.log(`Built item comparison matrix with ${itemComparisonMatrix.length} items (from ${validatedQuotations.reduce((sum, q) => sum + (q.items?.length || 0), 0)} total extracted items)`);
+    // Use AI matching with fallback to rule-based
+    let itemComparisonMatrix: ItemComparisonRow[];
+    const totalItems = validatedQuotations.reduce((sum, q) => sum + (q.items?.length || 0), 0);
+    
+    try {
+      console.log(`Attempting AI-powered semantic item matching for ${totalItems} items...`);
+      itemComparisonMatrix = await buildItemComparisonMatrixWithAI(validatedQuotations);
+      console.log(`✓ AI Item Matching succeeded: ${itemComparisonMatrix.length} unified item groups`);
+    } catch (aiError) {
+      console.error('AI Item Matching failed, falling back to rule-based matching:', aiError);
+      itemComparisonMatrix = buildItemComparisonMatrixRuleBased(validatedQuotations);
+      console.log(`Fallback: Rule-based matching created ${itemComparisonMatrix.length} items`);
+    }
+    
+    console.log(`Built item comparison matrix with ${itemComparisonMatrix.length} items (from ${totalItems} total extracted items)`);
 
     return new Response(
       JSON.stringify({
