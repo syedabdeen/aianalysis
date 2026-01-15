@@ -118,7 +118,6 @@ serve(async (req) => {
           throw new Error("userId is required");
         }
         
-        const { newPassword } = await req.json().catch(() => ({}));
         if (!newPassword || newPassword.length < 6) {
           throw new Error("newPassword must be at least 6 characters");
         }
@@ -126,6 +125,26 @@ serve(async (req) => {
         const { error } = await supabase.auth.admin.updateUserById(userId, {
           password: newPassword
         });
+        
+        if (error) throw error;
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "reset-device": {
+        if (!userId) {
+          throw new Error("userId is required");
+        }
+        
+        const { error } = await supabase
+          .from("users_extended")
+          .update({ 
+            device_id: null, 
+            device_bound_at: null,
+            device_info: null 
+          })
+          .eq("user_id", userId);
         
         if (error) throw error;
         return new Response(JSON.stringify({ success: true }), {

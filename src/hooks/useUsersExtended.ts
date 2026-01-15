@@ -7,6 +7,10 @@ export interface UserExtended {
   username: string;
   registered_at: string;
   valid_until: string;
+  device_id?: string | null;
+  device_bound_at?: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  device_info?: any;
 }
 
 export const useUsersExtended = () => {
@@ -106,6 +110,20 @@ export const useUsersExtended = () => {
     }
   };
 
+  const resetDevice = async (userId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-users', {
+        body: { action: 'reset-device', userId }
+      });
+
+      if (error) throw error;
+      await fetchUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  };
+
   return {
     users,
     loading,
@@ -115,5 +133,6 @@ export const useUsersExtended = () => {
     deleteUser,
     extendValidity,
     resetPassword,
+    resetDevice,
   };
 };

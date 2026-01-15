@@ -64,7 +64,26 @@ const LoginPage = () => {
           navigate('/landing', { replace: true });
         }
       } else {
-        const { error } = await signIn(email, password);
+        const { error, deviceError } = await signIn(email, password);
+        
+        // Handle device mismatch - show specific message
+        if (deviceError === 'DEVICE_MISMATCH') {
+          toast.error(
+            <div className="space-y-2 text-left">
+              <p className="font-semibold text-base">Access Restricted</p>
+              <p className="text-sm">This application is already installed and activated on another system using this email ID.</p>
+              <p className="text-sm">As per security policy, one registered email is allowed on one system only.</p>
+              <div className="pt-2 border-t border-border/50 mt-2">
+                <p className="text-sm">To reset or change your system, please contact the administrator:</p>
+                <p className="text-sm font-medium">📧 Email: cmc@widelens.info</p>
+                <p className="text-sm text-muted-foreground">Subject: System Reset Request – Registered Email ID</p>
+              </div>
+            </div>,
+            { duration: 20000 }
+          );
+          return;
+        }
+        
         if (error) {
           toast.error('Invalid email or password');
         } else {
