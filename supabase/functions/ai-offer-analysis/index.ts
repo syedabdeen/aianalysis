@@ -164,7 +164,7 @@ serve(async (req) => {
     console.log(`Analyzing ${files.length} quotation files...`);
 
     // Enhanced extraction prompt for retry attempts
-    const createExtractionPrompt = (isRetry: boolean, previousIssues?: string[]) => {
+    const createExtractionPrompt = (isRetry: boolean, previousIssues?: string[], useOCRMode = false) => {
       let prompt = `You are an expert procurement analyst. Extract ALL data from this supplier quotation document.
 
 CRITICAL REQUIREMENTS:
@@ -172,6 +172,23 @@ CRITICAL REQUIREMENTS:
 2. Remove currency symbols and commas from prices (e.g., "AED 15,000" → 15000)
 3. If a value is not found, use empty string "" for text or 0 for numbers
 4. Read the ENTIRE document carefully - prices are often in tables or at the bottom`;
+
+      // OCR-specific instructions for scanned documents
+      if (useOCRMode) {
+        prompt += `
+
+⚠️ OCR MODE - SCANNED DOCUMENT EXTRACTION:
+This document may be SCANNED, handwritten, or have unusual formatting. Apply these special techniques:
+
+1. READ ALL VISIBLE TEXT even if blurry, skewed, or at angles
+2. TABLES may be hand-drawn or poorly aligned - extract data row by row
+3. NUMBERS may use different formats: 15.000 vs 15,000 vs 15000 (interpret based on context)
+4. Company letterhead/stamps often contain the supplier name - look for logos and headers
+5. Look for HANDWRITTEN annotations that may contain prices or notes
+6. Prices might be CIRCLED, HIGHLIGHTED, or written in margin notes
+7. If text is unclear, make your best interpretation based on context
+8. Check EVERY page - totals are often on the last page`;
+      }
 
       if (isRetry && previousIssues) {
         prompt += `
@@ -245,15 +262,50 @@ Return ONLY this JSON structure:
       return prompt;
     };
 
+    // Categorize error for user-friendly messages
+    const categorizeError = (errorMessage: string): string => {
+      const msg = String(errorMessage || '').toLowerCase();
+      
+      if (msg.includes('timeout') || msg.includes('aborted') || msg.includes('exceeded')) {
+        return 'Document too complex or large - processing timed out';
+      }
+      if (msg.includes('429') || msg.includes('rate limit')) {
+        return 'Rate limit reached - please try again in a few minutes';
+      }
+      if (msg.includes('402') || msg.includes('payment') || msg.includes('credit')) {
+        return 'AI credits exhausted - please add credits to continue';
+      }
+      if (msg.includes('no content') || msg.includes('empty')) {
+        return 'File appears to be empty or corrupted';
+      }
+      if (msg.includes('json') || msg.includes('parse')) {
+        return 'Could not understand document format';
+      }
+      if (msg.includes('no items')) {
+        return 'No line items could be found in the quotation';
+      }
+      
+      return 'Extraction failed - document format not recognized';
+    };
+
     // Helper function to extract quotation from a single file
-    const extractQuotation = async (file: any, index: number, isRetry = false, previousIssues?: string[]): Promise<any> => {
-      const attemptLabel = isRetry ? ' (RETRY with stronger model)' : '';
+    // retryLevel: 0 = initial, 1 = enhanced model, 2 = OCR mode
+    const extractQuotation = async (file: any, index: number, retryLevel = 0, previousIssues?: string[]): Promise<any> => {
+      const retryLabels = ['', ' (RETRY with enhanced model)', ' (RETRY with OCR mode)'];
+      const attemptLabel = retryLabels[retryLevel] || '';
       console.log(`Processing file ${index + 1}/${files.length}: ${file.name}${attemptLabel}`);
       
-      const extractionPrompt = createExtractionPrompt(isRetry, previousIssues);
+      const useOCRMode = retryLevel >= 2;
+      const isRetry = retryLevel >= 1;
+      const extractionPrompt = createExtractionPrompt(isRetry, previousIssues, useOCRMode);
 
       const messages: any[] = [
-        { role: 'system', content: 'You are a procurement data extraction specialist. Extract data EXACTLY as it appears in the document. Return ONLY valid JSON - no explanations or markdown.' },
+        { 
+          role: 'system', 
+          content: useOCRMode 
+            ? 'You are a procurement OCR specialist. Read EVERY visible character from this scanned document. Extract data even from poor quality scans. Return ONLY valid JSON.'
+            : 'You are a procurement data extraction specialist. Extract data EXACTLY as it appears in the document. Return ONLY valid JSON - no explanations or markdown.' 
+        },
       ];
 
       // Handle different file types
@@ -276,7 +328,7 @@ Return ONLY this JSON structure:
           ? file.data 
           : `data:application/pdf;base64,${file.data}`;
         
-        console.log(`Processing ${file.name}: ${(file.data.length / 1024).toFixed(1)}KB using vision mode`);
+        console.log(`Processing ${file.name}: ${(file.data.length / 1024).toFixed(1)}KB using vision mode${useOCRMode ? ' (OCR)' : ''}`);
         
         messages.push({
           role: 'user',
@@ -291,10 +343,12 @@ Return ONLY this JSON structure:
       }
 
       try {
-        // Use stronger model for retry attempts
-        const model = isRetry ? 'google/gemini-2.5-pro' : 'google/gemini-2.5-flash';
+        // Use stronger model for retry attempts, always use pro for OCR mode
+        const model = retryLevel >= 1 ? 'google/gemini-2.5-pro' : 'google/gemini-2.5-flash';
+        // Longer timeout for OCR mode (scanned docs take longer)
+        const timeout = retryLevel >= 2 ? 150000 : (retryLevel >= 1 ? 120000 : 90000);
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), isRetry ? 120000 : 90000);
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
 
         const extractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
@@ -315,7 +369,8 @@ Return ONLY this JSON structure:
         if (!extractionResponse.ok) {
           const errorText = await extractionResponse.text();
           console.error(`AI extraction error for ${file.name}:`, extractionResponse.status, errorText);
-          return createPlaceholderQuotation(file.name, index, companySettings, `Extraction failed: ${extractionResponse.status}`);
+          const userError = categorizeError(`${extractionResponse.status} ${errorText}`);
+          return createPlaceholderQuotation(file.name, index, companySettings, userError);
         }
 
         const extractionData = await extractionResponse.json();
@@ -328,26 +383,26 @@ Return ONLY this JSON structure:
           return extracted;
         } else {
           console.error(`Failed to parse response for ${file.name}. Response preview:`, content.substring(0, 200));
-          return createPlaceholderQuotation(file.name, index, companySettings, 'JSON parse failed');
+          return createPlaceholderQuotation(file.name, index, companySettings, categorizeError('JSON parse failed'));
         }
       } catch (e: any) {
         if (e.name === 'AbortError') {
           console.error(`Extraction timeout for ${file.name} (exceeded limit)`);
-          return createPlaceholderQuotation(file.name, index, companySettings, 'Extraction timeout');
+          return createPlaceholderQuotation(file.name, index, companySettings, categorizeError('Extraction timeout'));
         } else {
           console.error(`Failed to process ${file.name}:`, e.message);
-          return createPlaceholderQuotation(file.name, index, companySettings, e.message);
+          return createPlaceholderQuotation(file.name, index, companySettings, categorizeError(e.message));
         }
       }
     };
 
     // Process all files in PARALLEL for speed
     console.log(`Starting parallel extraction of ${files.length} files...`);
-    const extractionPromises = files.map((file: any, i: number) => extractQuotation(file, i));
+    const extractionPromises = files.map((file: any, i: number) => extractQuotation(file, i, 0));
     let extractedQuotations = await Promise.all(extractionPromises);
     console.log(`Initial extraction complete for ${extractedQuotations.length} files`);
 
-    // Phase 1: Quality check and retry for suspicious extractions
+    // Phase 1: Quality check and multi-strategy retry for suspicious extractions
     for (let i = 0; i < extractedQuotations.length; i++) {
       const extraction = extractedQuotations[i];
       const quality = evaluateExtractionQuality(extraction);
@@ -355,22 +410,43 @@ Return ONLY this JSON structure:
       if (quality.quality !== 'good') {
         console.log(`⚠️ File ${i + 1} has ${quality.quality} extraction quality: ${quality.reasons.join('; ')}`);
         
-        // Retry with stronger model
-        console.log(`🔄 Retrying extraction for file ${i + 1} with enhanced model...`);
-        const retryResult = await extractQuotation(files[i], i, true, quality.reasons);
+        // Retry 1: Enhanced model with stricter prompt
+        console.log(`🔄 Retry 1 for file ${i + 1}: Enhanced model...`);
+        let retryResult = await extractQuotation(files[i], i, 1, quality.reasons);
+        let retryQuality = evaluateExtractionQuality(retryResult);
         
-        // Evaluate retry quality
-        const retryQuality = evaluateExtractionQuality(retryResult);
         if (retryQuality.quality === 'good' || 
             (retryResult.items?.length || 0) > (extraction.items?.length || 0) ||
             parseNumericValue(retryResult.commercial?.total) > parseNumericValue(extraction.commercial?.total)) {
-          console.log(`✓ Retry improved extraction for file ${i + 1}`);
+          console.log(`✓ Retry 1 improved extraction for file ${i + 1}`);
           extractedQuotations[i] = retryResult;
         } else {
-          console.log(`⚠️ Retry did not improve extraction for file ${i + 1}, keeping original`);
-          // Mark as having extraction issues
-          if (quality.quality === 'bad') {
-            extractedQuotations[i]._extractionIssue = 'No items could be extracted from this quotation';
+          // Retry 2: OCR mode for scanned documents
+          console.log(`🔄 Retry 2 for file ${i + 1}: OCR mode...`);
+          const ocrResult = await extractQuotation(files[i], i, 2, quality.reasons);
+          const ocrQuality = evaluateExtractionQuality(ocrResult);
+          
+          if (ocrQuality.quality === 'good' ||
+              (ocrResult.items?.length || 0) > (retryResult.items?.length || 0) ||
+              (ocrResult.items?.length || 0) > (extraction.items?.length || 0) ||
+              parseNumericValue(ocrResult.commercial?.total) > parseNumericValue(retryResult.commercial?.total)) {
+            console.log(`✓ OCR mode improved extraction for file ${i + 1}`);
+            extractedQuotations[i] = ocrResult;
+          } else {
+            console.log(`⚠️ All retries failed for file ${i + 1}, keeping best result`);
+            // Keep the best result among all attempts
+            const results = [extraction, retryResult, ocrResult];
+            const best = results.reduce((a, b) => {
+              const aScore = (a.items?.length || 0) + (parseNumericValue(a.commercial?.total) > 0 ? 10 : 0);
+              const bScore = (b.items?.length || 0) + (parseNumericValue(b.commercial?.total) > 0 ? 10 : 0);
+              return bScore > aScore ? b : a;
+            });
+            extractedQuotations[i] = best;
+            
+            // Mark as having extraction issues if still bad
+            if (evaluateExtractionQuality(best).quality === 'bad') {
+              extractedQuotations[i]._extractionIssue = 'No items could be extracted from this quotation';
+            }
           }
         }
       }

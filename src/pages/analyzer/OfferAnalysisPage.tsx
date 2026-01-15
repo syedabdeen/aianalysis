@@ -14,7 +14,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { 
   Upload, FileText, X, Sparkles, Download, FileSpreadsheet,
   Award, AlertTriangle, CheckCircle, TrendingUp, DollarSign,
-  Clock, Shield, Loader2, Save, ArrowLeft, Eye, List
+  Clock, Shield, Loader2, Save, ArrowLeft, Eye, List, RefreshCw
 } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -26,6 +26,8 @@ import {
   type ItemComparisonEntry,
   type AnalysisResult
 } from '@/lib/exports/offerAnalysisExport';
+import { ExtractionWarningBanner } from '@/components/analyzer/ExtractionWarningBanner';
+import { ManualQuotationDialog, type ManualQuotationData } from '@/components/analyzer/ManualQuotationDialog';
 
 // Max file size: 2MB per file
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
@@ -60,6 +62,12 @@ export default function OfferAnalysisPage() {
   const [isSaved, setIsSaved] = useState(false);
   const [isViewMode, setIsViewMode] = useState(false);
   const [savedReportRef, setSavedReportRef] = useState<string>('');
+  
+  // Manual entry state
+  const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const [manualEntryIndex, setManualEntryIndex] = useState<number | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryingIndex, setRetryingIndex] = useState<number | null>(null);
 
   // Get canonical supplier columns with fallback to extracted quotations for saved reports
   const supplierColumns = analysisResult 
@@ -345,12 +353,133 @@ export default function OfferAnalysisPage() {
     setSavedReportRef('');
     setActiveTab('upload');
     setUploadedFiles([]);
+    setManualEntryOpen(false);
+    setManualEntryIndex(null);
     window.history.replaceState({}, document.title);
   };
 
   const handleUploadZoneClick = () => {
     if (isAnalyzing) return;
     document.getElementById('file-upload')?.click();
+  };
+
+  // Handle retry extraction for a specific supplier
+  const handleRetryExtraction = async (supplierIndex: number) => {
+    if (!uploadedFiles[supplierIndex] || isRetrying) return;
+    
+    setIsRetrying(true);
+    setRetryingIndex(supplierIndex);
+    
+    try {
+      const file = uploadedFiles[supplierIndex].file;
+      const base64 = await fileToBase64(file);
+      const fileData = { name: file.name, type: file.type, data: base64 };
+      
+      toast({
+        title: language === 'ar' ? 'جاري إعادة المحاولة' : 'Retrying Extraction',
+        description: language === 'ar' 
+          ? `إعادة استخراج البيانات من ${file.name}`
+          : `Re-extracting data from ${file.name}`,
+      });
+      
+      const { data, error } = await supabase.functions.invoke('ai-offer-analysis', {
+        body: { 
+          files: [fileData], 
+          companySettings: { 
+            name: settings.company_name_en, 
+            region: settings.region, 
+            currency: settings.default_currency || 'AED' 
+          }
+        },
+      });
+      
+      if (error) throw error;
+      
+      if (data?.extractedQuotations?.[0]) {
+        const newQuotation = data.extractedQuotations[0];
+        const updated = [...extractedQuotations];
+        updated[supplierIndex] = newQuotation;
+        setExtractedQuotations(updated);
+        
+        // Update uploaded file status
+        setUploadedFiles(prev => prev.map((uf, i) => 
+          i === supplierIndex ? { ...uf, status: 'completed', extractedData: newQuotation } : uf
+        ));
+        
+        // Check if extraction improved
+        const hasItems = newQuotation.items?.length > 0;
+        const hasTotal = parseFloat(newQuotation.commercial?.total) > 0;
+        
+        if (hasItems || hasTotal) {
+          toast({
+            title: language === 'ar' ? 'تم التحسين' : 'Extraction Improved',
+            description: language === 'ar' 
+              ? `تم استخراج ${newQuotation.items?.length || 0} بند`
+              : `Extracted ${newQuotation.items?.length || 0} items`,
+          });
+          setIsSaved(false); // Mark as unsaved since data changed
+        } else {
+          toast({
+            title: language === 'ar' ? 'لم تتحسن النتائج' : 'No Improvement',
+            description: language === 'ar' 
+              ? 'يرجى محاولة الإدخال اليدوي'
+              : 'Please try manual entry instead',
+            variant: 'destructive',
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('Retry extraction error:', error);
+      toast({
+        title: language === 'ar' ? 'فشلت إعادة المحاولة' : 'Retry Failed',
+        description: error.message || 'Failed to re-extract data',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRetrying(false);
+      setRetryingIndex(null);
+    }
+  };
+
+  // Handle manual quotation data entry
+  const handleManualSave = (data: ManualQuotationData) => {
+    if (manualEntryIndex === null) return;
+    
+    const updated = [...extractedQuotations];
+    updated[manualEntryIndex] = {
+      supplier: data.supplier,
+      quotation: data.quotation,
+      commercial: {
+        ...data.commercial,
+        subtotal: data.commercial.total * 0.95, // Estimate subtotal
+        tax: data.commercial.total * 0.05,      // Estimate tax
+      },
+      items: data.items.map((item, idx) => ({
+        itemNo: idx + 1,
+        description: item.description,
+        unit: item.unit,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.quantity * item.unitPrice,
+      })),
+      itemsExtracted: data.items.length,
+      pricedItemsCount: data.items.filter(i => i.unitPrice > 0).length,
+      technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' },
+      _extractionIssue: null, // Clear the issue
+      _manualEntry: true,     // Mark as manually entered
+    };
+    
+    setExtractedQuotations(updated);
+    setIsSaved(false); // Mark as unsaved
+    setManualEntryOpen(false);
+    setManualEntryIndex(null);
+    
+    toast({
+      title: language === 'ar' ? 'تم الحفظ' : 'Data Saved',
+      description: language === 'ar' 
+        ? 'تم حفظ بيانات العرض بنجاح'
+        : 'Quotation data saved successfully',
+    });
   };
 
   return (
@@ -400,6 +529,32 @@ export default function OfferAnalysisPage() {
             </Button>
           </div>
         )}
+
+        {/* Extraction Warnings Banner */}
+        {analysisResult && extractedQuotations.length > 0 && !isViewMode && (
+          <ExtractionWarningBanner
+            extractedQuotations={extractedQuotations}
+            uploadedFiles={uploadedFiles}
+            onRetryExtraction={handleRetryExtraction}
+            onManualEntry={(idx) => {
+              setManualEntryIndex(idx);
+              setManualEntryOpen(true);
+            }}
+            isRetrying={isRetrying}
+            retryingIndex={retryingIndex}
+          />
+        )}
+
+        {/* Manual Entry Dialog */}
+        <ManualQuotationDialog
+          open={manualEntryOpen}
+          onOpenChange={setManualEntryOpen}
+          supplierName={manualEntryIndex !== null ? extractedQuotations[manualEntryIndex]?.supplier?.name || '' : ''}
+          fileName={manualEntryIndex !== null ? uploadedFiles[manualEntryIndex]?.file?.name || '' : ''}
+          existingData={manualEntryIndex !== null ? extractedQuotations[manualEntryIndex] : undefined}
+          defaultCurrency={settings.default_currency || 'AED'}
+          onSave={handleManualSave}
+        />
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
