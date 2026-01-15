@@ -14,6 +14,66 @@ export type Database = {
   }
   public: {
     Tables: {
+      analysis_report_counters: {
+        Row: {
+          created_at: string | null
+          current_value: number
+          id: string
+          prefix: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          current_value?: number
+          id?: string
+          prefix: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          current_value?: number
+          id?: string
+          prefix?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      analysis_reports: {
+        Row: {
+          analysis_data: Json
+          created_at: string | null
+          id: string
+          input_summary: string | null
+          sequence_number: string
+          title: string
+          type: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          analysis_data: Json
+          created_at?: string | null
+          id?: string
+          input_summary?: string | null
+          sequence_number: string
+          title: string
+          type: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          analysis_data?: Json
+          created_at?: string | null
+          id?: string
+          input_summary?: string | null
+          sequence_number?: string
+          title?: string
+          type?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       approval_audit_logs: {
         Row: {
           action: string
@@ -3654,6 +3714,7 @@ export type Database = {
         }
         Returns: string
       }
+      get_analysis_report_sequence: { Args: { _type: string }; Returns: string }
       get_category_code: { Args: { _name: string }; Returns: string }
       get_cost_center_code: { Args: { _name: string }; Returns: string }
       get_department_code: { Args: { _name: string }; Returns: string }

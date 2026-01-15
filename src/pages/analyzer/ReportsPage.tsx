@@ -34,7 +34,9 @@ export default function ReportsPage() {
   const { settings } = useLocalCompanySettings();
   const { 
     getReportsByType, 
-    deleteReport, 
+    deleteReport,
+    isLoading,
+    isDeleting,
     marketReportsCount, 
     offerReportsCount 
   } = useAnalysisReports();
@@ -150,13 +152,21 @@ export default function ReportsPage() {
     setDeleteDialogOpen(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (reportToDelete) {
-      deleteReport(reportToDelete.id);
-      toast({
-        title: language === 'ar' ? 'تم الحذف' : 'Deleted',
-        description: `${reportToDelete.sequenceNumber} ${language === 'ar' ? 'تم حذفه' : 'has been deleted'}`,
-      });
+      try {
+        await deleteReport(reportToDelete.id);
+        toast({
+          title: language === 'ar' ? 'تم الحذف' : 'Deleted',
+          description: `${reportToDelete.sequenceNumber} ${language === 'ar' ? 'تم حذفه' : 'has been deleted'}`,
+        });
+      } catch (error: any) {
+        toast({
+          title: language === 'ar' ? 'خطأ' : 'Error',
+          description: error.message || 'Failed to delete report',
+          variant: 'destructive',
+        });
+      }
       setReportToDelete(null);
     }
     setDeleteDialogOpen(false);
