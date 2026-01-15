@@ -63,7 +63,6 @@ export default function AnalyzerHome() {
   ];
 
   const features = [
-    { icon: Zap, text: language === 'ar' ? 'بدون تسجيل دخول' : 'No Login Required', color: 'text-yellow-500' },
     { icon: FileText, text: language === 'ar' ? 'تصدير PDF و Excel' : 'PDF & Excel Export', color: 'text-blue-500' },
     { icon: Languages, text: language === 'ar' ? 'دعم ثنائي اللغة' : 'Bilingual Support', color: 'text-green-500' },
     { icon: Palette, text: language === 'ar' ? 'تقارير بعلامتك التجارية' : 'Branded Reports', color: 'text-purple-500' },
