@@ -486,11 +486,75 @@ Provide accurate scores, identify the best options clearly, and give actionable 
 
     console.log('Analysis complete');
 
+    // Build reliable item comparison matrix from extracted data (not relying on AI)
+    const buildItemComparisonMatrix = (quotations: any[]) => {
+      // Collect all items from all suppliers, keyed by normalized description
+      const itemMap = new Map<string, {
+        description: string;
+        suppliers: Record<string, { unitPrice: number; quantity: number; total: number }>;
+      }>();
+      
+      const supplierNames = quotations.map(q => q.supplier.name);
+      
+      quotations.forEach(q => {
+        const supplierName = q.supplier.name;
+        (q.items || []).forEach((item: any) => {
+          // Normalize description for matching
+          const rawDesc = (item.description || '').trim();
+          if (!rawDesc) return;
+          
+          const normalizedKey = rawDesc.toLowerCase().replace(/\s+/g, ' ').substring(0, 60);
+          
+          if (!itemMap.has(normalizedKey)) {
+            itemMap.set(normalizedKey, {
+              description: rawDesc.substring(0, 80),
+              suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0 }]))
+            });
+          }
+          
+          const entry = itemMap.get(normalizedKey)!;
+          const unitPrice = parseNumericValue(item.unitPrice);
+          const quantity = parseNumericValue(item.quantity) || 1;
+          const total = parseNumericValue(item.totalPrice) || (unitPrice * quantity);
+          
+          entry.suppliers[supplierName] = { unitPrice, quantity, total };
+        });
+      });
+      
+      // Convert to array with lowest/avg calculations
+      const result: any[] = [];
+      
+      itemMap.forEach((data, key) => {
+        const prices = Object.values(data.suppliers)
+          .map(s => s.unitPrice)
+          .filter(p => p > 0);
+        
+        const lowestPrice = prices.length > 0 ? Math.min(...prices) : 0;
+        const averagePrice = prices.length > 0 ? prices.reduce((a, b) => a + b, 0) / prices.length : 0;
+        const lowestSupplier = Object.entries(data.suppliers)
+          .find(([_, v]) => v.unitPrice === lowestPrice && v.unitPrice > 0)?.[0] || '';
+        
+        result.push({
+          item: data.description,
+          suppliers: data.suppliers,
+          lowestSupplier,
+          lowestPrice,
+          averagePrice
+        });
+      });
+      
+      return result;
+    };
+    
+    const itemComparisonMatrix = buildItemComparisonMatrix(validatedQuotations);
+    console.log(`Built item comparison matrix with ${itemComparisonMatrix.length} items`);
+
     return new Response(
       JSON.stringify({
         success: true,
         extractedQuotations: validatedQuotations,
         analysis,
+        itemComparisonMatrix, // Reliable item-wise comparison built from extracted data
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

@@ -31,6 +31,14 @@ interface UploadedFile {
   extractedData?: any;
 }
 
+interface ItemComparisonEntry {
+  item: string;
+  suppliers: Record<string, { unitPrice: number; quantity: number; total: number }>;
+  lowestSupplier: string;
+  lowestPrice: number;
+  averagePrice: number;
+}
+
 interface AnalysisResult {
   technicalComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; score?: number }> }>;
   commercialComparison: Array<{ criteria: string; suppliers: Record<string, { value: string; isLowest?: boolean; isFastest?: boolean }> }>;
@@ -55,6 +63,8 @@ export default function OfferAnalysisPage() {
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [itemComparisonMatrix, setItemComparisonMatrix] = useState<ItemComparisonEntry[]>([]);
+  const [extractedQuotations, setExtractedQuotations] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('upload');
   const [dragActive, setDragActive] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -64,6 +74,13 @@ export default function OfferAnalysisPage() {
   useEffect(() => {
     if (viewReport?.analysisData) {
       setAnalysisResult(viewReport.analysisData);
+      // Restore item comparison matrix if saved
+      if (viewReport.analysisData?.itemComparisonMatrix) {
+        setItemComparisonMatrix(viewReport.analysisData.itemComparisonMatrix);
+      }
+      if (viewReport.analysisData?.extractedQuotations) {
+        setExtractedQuotations(viewReport.analysisData.extractedQuotations);
+      }
       setActiveTab('technical');
       setIsViewMode(true);
       setIsSaved(true);
@@ -160,6 +177,10 @@ export default function OfferAnalysisPage() {
       
       if (data.extractedQuotations) {
         setUploadedFiles(prev => prev.map((uf, i) => ({ ...uf, status: 'completed', extractedData: data.extractedQuotations[i] })));
+        setExtractedQuotations(data.extractedQuotations);
+      }
+      if (data.itemComparisonMatrix) {
+        setItemComparisonMatrix(data.itemComparisonMatrix);
       }
       setAnalysisResult(data.analysis);
       setAnalysisProgress(100);
@@ -187,10 +208,17 @@ export default function OfferAnalysisPage() {
     const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
     const inputSummary = `${suppliers.length} Vendors compared`;
     
+    // Include itemComparisonMatrix and extractedQuotations in saved data
+    const dataToSave = {
+      ...analysisResult,
+      itemComparisonMatrix,
+      extractedQuotations,
+    };
+    
     const saved = saveReport(
       'offer',
       analysisResult.summary?.bestValue || 'Offer Analysis',
-      analysisResult,
+      dataToSave,
       inputSummary
     );
     
@@ -381,59 +409,195 @@ export default function OfferAnalysisPage() {
     doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
     yPos += 12;
     
-    // ===== 3. ITEM-WISE PRICE COMPARISON =====
-    if (analysisResult.itemComparison && analysisResult.itemComparison.length > 0) {
-      checkNewPage(50);
+    // ===== 3. ITEM-WISE PRICE COMPARISON (using itemComparisonMatrix) =====
+    if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
+      checkNewPage(60);
       doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
-      doc.text('3. Item-wise Price Comparison', margin, yPos);
+      doc.text('3. Item-wise Price Comparison (Unit Prices)', margin, yPos);
       yPos += 8;
       
-      // Item table header
-      const itemColWidth = 60;
-      const priceColWidth = (pageWidth - margin * 2 - itemColWidth) / suppliers.length;
+      // Calculate column widths: Item | Vendors... | Lowest | Avg
+      const lowestColWidth = 22;
+      const avgColWidth = 22;
+      const itemColWidth = 50;
+      const availableForVendors = pageWidth - margin * 2 - itemColWidth - lowestColWidth - avgColWidth;
+      const vendorColWidth = availableForVendors / suppliers.length;
       
+      // Table Header
       doc.setFillColor(230, 230, 230);
       doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-      doc.setFontSize(8);
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'bold');
-      doc.text('Item Description', margin + 2, yPos);
-      suppliers.forEach((supplier, i) => {
-        const xPos = margin + itemColWidth + (i * priceColWidth);
-        doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: priceColWidth - 4 });
+      
+      let headerX = margin + 2;
+      doc.text('Item Description', headerX, yPos);
+      headerX = margin + itemColWidth;
+      
+      suppliers.forEach((supplier) => {
+        doc.text(supplier.substring(0, 12), headerX + 1, yPos, { maxWidth: vendorColWidth - 2 });
+        headerX += vendorColWidth;
       });
+      
+      // Lowest header (yellow bg)
+      doc.setFillColor(255, 255, 200);
+      doc.rect(headerX, yPos - 5, lowestColWidth, rowHeight, 'F');
+      doc.setTextColor(0, 0, 0);
+      doc.text('Lowest', headerX + 2, yPos);
+      headerX += lowestColWidth;
+      
+      // Avg header (blue bg)
+      doc.setFillColor(200, 220, 255);
+      doc.rect(headerX, yPos - 5, avgColWidth, rowHeight, 'F');
+      doc.text('Avg', headerX + 2, yPos);
+      
       yPos += rowHeight;
       
+      // Draw header bottom border
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.3);
+      doc.line(margin, yPos - 3, pageWidth - margin, yPos - 3);
+      
+      // Data rows (show up to 20 items)
       doc.setFont('helvetica', 'normal');
-      analysisResult.itemComparison.slice(0, 10).forEach((item: any, idx: number) => {
+      itemComparisonMatrix.slice(0, 20).forEach((item, idx) => {
         checkNewPage(rowHeight + 5);
         
+        // Alternate row background
         if (idx % 2 === 0) {
-          doc.setFillColor(248, 248, 248);
+          doc.setFillColor(250, 250, 250);
           doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
         }
         
-        doc.setFontSize(8);
-        doc.text(String(item.item || '').substring(0, 30), margin + 2, yPos, { maxWidth: itemColWidth - 4 });
+        let xPos = margin + 2;
+        doc.setFontSize(7);
+        doc.setTextColor(0, 0, 0);
+        doc.text(String(item.item || '').substring(0, 28), xPos, yPos, { maxWidth: itemColWidth - 4 });
+        xPos = margin + itemColWidth;
         
-        suppliers.forEach((supplier, i) => {
-          const val = item.suppliers?.[supplier];
-          const xPos = margin + itemColWidth + (i * priceColWidth);
-          const isLowest = item.lowestSupplier === supplier;
+        // Vendor unit prices
+        suppliers.forEach((supplier) => {
+          const supplierData = item.suppliers?.[supplier];
+          const unitPrice = supplierData?.unitPrice || 0;
+          const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
           
+          // Highlight lowest price cell in green
           if (isLowest) {
             doc.setFillColor(198, 246, 213);
-            doc.rect(xPos, yPos - 5, priceColWidth, rowHeight, 'F');
+            doc.rect(xPos, yPos - 5, vendorColWidth, rowHeight, 'F');
             doc.setFont('helvetica', 'bold');
           }
           
-          const price = val?.total || val?.unitPrice || 'N/A';
-          doc.text(String(price).substring(0, 15), xPos + 2, yPos);
+          doc.text(unitPrice > 0 ? unitPrice.toLocaleString() : '-', xPos + 1, yPos);
           doc.setFont('helvetica', 'normal');
+          xPos += vendorColWidth;
         });
+        
+        // Lowest value (yellow bg)
+        doc.setFillColor(255, 255, 200);
+        doc.rect(xPos, yPos - 5, lowestColWidth, rowHeight, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.text(item.lowestPrice > 0 ? item.lowestPrice.toLocaleString() : '-', xPos + 2, yPos);
+        xPos += lowestColWidth;
+        
+        // Average value (blue bg)
+        doc.setFillColor(200, 220, 255);
+        doc.rect(xPos, yPos - 5, avgColWidth, rowHeight, 'F');
+        doc.setFont('helvetica', 'normal');
+        doc.text(item.averagePrice > 0 ? item.averagePrice.toFixed(0) : '-', xPos + 2, yPos);
         
         yPos += rowHeight;
       });
+      
+      // Table bottom border
+      doc.setDrawColor(150, 150, 150);
+      doc.setLineWidth(0.2);
+      doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
+      
+      // If there are more items, show a note
+      if (itemComparisonMatrix.length > 20) {
+        yPos += 4;
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`... and ${itemComparisonMatrix.length - 20} more items (see Excel export for complete list)`, margin, yPos);
+      }
+      
+      yPos += 12;
+    }
+    
+    // ===== 3B. SUBTOTAL / VAT / TOTAL SUMMARY =====
+    if (extractedQuotations && extractedQuotations.length > 0) {
+      checkNewPage(40);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Price Summary (Subtotal, Tax, Total)', margin, yPos);
+      yPos += 6;
+      
+      // Summary table header
+      const summaryRows = ['Subtotal', 'Tax/VAT', 'Grand Total'];
+      const summaryParamWidth = 35;
+      const summaryVendorWidth = (pageWidth - margin * 2 - summaryParamWidth) / suppliers.length;
+      
+      doc.setFillColor(240, 240, 240);
+      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      doc.text('', margin + 2, yPos);
+      suppliers.forEach((supplier, i) => {
+        const xPos = margin + summaryParamWidth + (i * summaryVendorWidth);
+        doc.text(supplier.substring(0, 15), xPos + 2, yPos, { maxWidth: summaryVendorWidth - 4 });
+      });
+      yPos += rowHeight;
+      
+      // Summary data rows
+      doc.setFont('helvetica', 'normal');
+      summaryRows.forEach((rowLabel, rowIdx) => {
+        checkNewPage(rowHeight + 5);
+        
+        const isTotal = rowLabel === 'Grand Total';
+        if (isTotal) {
+          doc.setFillColor(230, 245, 230);
+          doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+          doc.setFont('helvetica', 'bold');
+        } else if (rowIdx % 2 === 0) {
+          doc.setFillColor(250, 250, 250);
+          doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+        }
+        
+        doc.setFontSize(7);
+        doc.text(rowLabel, margin + 2, yPos);
+        
+        // Find min total for highlighting
+        const totals = extractedQuotations.map(q => q.commercial?.total || 0);
+        const minTotal = Math.min(...totals.filter(t => t > 0));
+        
+        suppliers.forEach((supplier, i) => {
+          const q = extractedQuotations.find(eq => eq.supplier?.name === supplier);
+          const xPos = margin + summaryParamWidth + (i * summaryVendorWidth);
+          let value = 0;
+          
+          if (rowLabel === 'Subtotal') {
+            value = q?.commercial?.subtotal || 0;
+          } else if (rowLabel === 'Tax/VAT') {
+            value = q?.commercial?.tax || 0;
+          } else if (rowLabel === 'Grand Total') {
+            value = q?.commercial?.total || 0;
+          }
+          
+          // Highlight lowest total
+          if (isTotal && value > 0 && value === minTotal) {
+            doc.setFillColor(198, 246, 213);
+            doc.rect(xPos, yPos - 5, summaryVendorWidth, rowHeight, 'F');
+          }
+          
+          const currency = q?.commercial?.currency || 'AED';
+          doc.text(value > 0 ? `${currency} ${value.toLocaleString()}` : '-', xPos + 2, yPos);
+        });
+        
+        doc.setFont('helvetica', 'normal');
+        yPos += rowHeight;
+      });
+      
       yPos += 10;
     }
     
@@ -553,6 +717,36 @@ export default function OfferAnalysisPage() {
       csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || 'N/A'} (${row.suppliers[s]?.score || 0})"`).join(',')}\n`;
     });
     
+    // Item-wise Price Comparison with Lowest and Average
+    if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
+      csv += '\nITEM-WISE PRICE COMPARISON (Unit Prices)\n';
+      csv += `Item Description,${suppliers.join(',')},Lowest,Average\n`;
+      itemComparisonMatrix.forEach(item => {
+        const vendorPrices = suppliers.map(s => {
+          const price = item.suppliers?.[s]?.unitPrice || 0;
+          return price > 0 ? price : '-';
+        }).join(',');
+        csv += `"${(item.item || '').replace(/"/g, "'")}",${vendorPrices},${item.lowestPrice > 0 ? item.lowestPrice : '-'},${item.averagePrice > 0 ? item.averagePrice.toFixed(2) : '-'}\n`;
+      });
+    }
+    
+    // Subtotal / VAT / Total Summary
+    if (extractedQuotations && extractedQuotations.length > 0) {
+      csv += '\nPRICE SUMMARY\n';
+      csv += `Parameter,${suppliers.join(',')}\n`;
+      ['Subtotal', 'Tax/VAT', 'Grand Total'].forEach(label => {
+        const values = suppliers.map(s => {
+          const q = extractedQuotations.find(eq => eq.supplier?.name === s);
+          let val = 0;
+          if (label === 'Subtotal') val = q?.commercial?.subtotal || 0;
+          else if (label === 'Tax/VAT') val = q?.commercial?.tax || 0;
+          else val = q?.commercial?.total || 0;
+          return val > 0 ? val : '-';
+        }).join(',');
+        csv += `"${label}",${values}\n`;
+      });
+    }
+    
     // Recommendation
     csv += '\nRECOMMENDATION\n';
     csv += `Best Value,"${analysisResult.summary.bestValue}"\n`;
@@ -586,6 +780,8 @@ export default function OfferAnalysisPage() {
 
   const handleNewAnalysis = () => {
     setAnalysisResult(null);
+    setItemComparisonMatrix([]);
+    setExtractedQuotations([]);
     setIsViewMode(false);
     setIsSaved(false);
     setActiveTab('upload');
