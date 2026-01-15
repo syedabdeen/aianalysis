@@ -464,9 +464,18 @@ export async function generateOfferAnalysisPDF(
     
     // Render ALL items with pagination
     doc.setFont('helvetica', 'normal');
+    const baseRowHeight = 7;
+    const lineHeightMm = 2.5; // Height per line of text
+    
     itemComparisonMatrix.forEach((item, idx) => {
-      // Check if we need a new page (with space for headers + at least 1 row)
-      if (yPos + rowHeight > pageHeight - 25) {
+      const descText = String(item.item || '');
+      doc.setFontSize(6);
+      const descLines = doc.splitTextToSize(descText, colItem - 2);
+      const numLines = descLines.length;
+      const dynamicRowHeight = Math.max(baseRowHeight, numLines * lineHeightMm + 3);
+      
+      // Check if we need a new page (with space for headers + this row)
+      if (yPos + dynamicRowHeight > pageHeight - 25) {
         doc.addPage();
         yPos = 15;
         // Re-render headers on new page
@@ -475,7 +484,7 @@ export async function generateOfferAnalysisPDF(
       
       if (idx % 2 === 0) {
         doc.setFillColor(250, 250, 250);
-        doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+        doc.rect(margin, yPos - 5, pageWidth - margin * 2, dynamicRowHeight, 'F');
       }
       
       const qty = item.quantity || 1;
@@ -486,8 +495,13 @@ export async function generateOfferAnalysisPDF(
       doc.setTextColor(0, 0, 0);
       doc.text(String(idx + 1), xPos, yPos);
       xPos += colNo;
-      doc.text(String(item.item || '').substring(0, 22), xPos, yPos, { maxWidth: colItem - 2 });
+      
+      // Render wrapped description text
+      descLines.forEach((line: string, lineIdx: number) => {
+        doc.text(line, xPos, yPos + (lineIdx * lineHeightMm));
+      });
       xPos += colItem;
+      
       doc.text(String(qty), xPos, yPos);
       xPos += colQty;
       doc.text(unit, xPos, yPos);
@@ -502,7 +516,7 @@ export async function generateOfferAnalysisPDF(
         
         if (isLowest) {
           doc.setFillColor(198, 246, 213);
-          doc.rect(xPos, yPos - 5, colVendorWidth, rowHeight, 'F');
+          doc.rect(xPos, yPos - 5, colVendorWidth, dynamicRowHeight, 'F');
           doc.setFont('helvetica', 'bold');
         }
         
@@ -513,16 +527,16 @@ export async function generateOfferAnalysisPDF(
       });
       
       doc.setFillColor(255, 255, 200);
-      doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
+      doc.rect(lowestX, yPos - 5, colLowest, dynamicRowHeight, 'F');
       doc.setFont('helvetica', 'bold');
       doc.text((item.lowestTotal || 0) > 0 ? (item.lowestTotal || 0).toLocaleString() : '—', lowestX + 1, yPos);
       
       doc.setFillColor(200, 220, 255);
-      doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
+      doc.rect(avgX, yPos - 5, colAvg, dynamicRowHeight, 'F');
       doc.setFont('helvetica', 'normal');
       doc.text((item.averageTotal || 0) > 0 ? Math.round(item.averageTotal || 0).toLocaleString() : '—', avgX + 1, yPos);
       
-      yPos += rowHeight;
+      yPos += dynamicRowHeight;
     });
     
     doc.setDrawColor(150, 150, 150);
