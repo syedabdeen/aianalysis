@@ -20,6 +20,40 @@ function parseNumericValue(value: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+// Check if a string looks like a reference code rather than a company name
+function looksLikeReferenceCode(str: string): boolean {
+  if (!str || str.length < 3) return true;
+  const normalized = str.trim();
+  
+  // Patterns that indicate reference codes
+  const refPatterns = [
+    /^[A-Z]{0,3}-?\d{2,}/i,        // QT-855, RFQ-2024, Q-123
+    /^\d{3,}/,                      // Pure numbers like 855123
+    /^REF[-\s]?\d/i,                // REF-001
+    /^Q[-\s]?\d/i,                  // Q-001
+    /^RFQ[-\s]?\d/i,                // RFQ-001
+    /^QUOTE[-\s]?\d/i,              // QUOTE-001
+    /^INV[-\s]?\d/i,                // INV-001
+    /^PO[-\s]?\d/i,                 // PO-001
+  ];
+  
+  // If matches any reference pattern, it's likely a reference
+  if (refPatterns.some(p => p.test(normalized))) {
+    // But if it also has company-like words, might be valid
+    const companyWords = ['ltd', 'llc', 'inc', 'corp', 'co.', 'company', 'trading', 'enterprise', 'group', 'services'];
+    const hasCompanyWord = companyWords.some(w => normalized.toLowerCase().includes(w));
+    if (!hasCompanyWord) return true;
+  }
+  
+  // Too short to be a company name (less than 3 words and under 10 chars)
+  const words = normalized.split(/\s+/);
+  if (words.length < 2 && normalized.length < 10 && /\d/.test(normalized)) {
+    return true;
+  }
+  
+  return false;
+}
+
 // Repair malformed JSON from AI responses
 function repairJSON(jsonStr: string): string {
   return jsonStr
@@ -68,6 +102,45 @@ function safeJSONParse(content: string, fileName: string): any | null {
   return null;
 }
 
+// Evaluate extraction quality
+function evaluateExtractionQuality(extracted: any): { quality: 'good' | 'suspicious' | 'bad'; reasons: string[] } {
+  const reasons: string[] = [];
+  
+  const itemsCount = Array.isArray(extracted?.items) ? extracted.items.length : 0;
+  const pricedItemsCount = itemsCount > 0 
+    ? extracted.items.filter((item: any) => 
+        parseNumericValue(item?.unitPrice) > 0 || parseNumericValue(item?.totalPrice) > 0
+      ).length 
+    : 0;
+  const hasCommercialTotal = parseNumericValue(extracted?.commercial?.total) > 0;
+  const supplierName = extracted?.supplier?.name || '';
+  const supplierNameIsSuspicious = looksLikeReferenceCode(supplierName);
+  
+  // Check for suspicious extraction
+  if (itemsCount === 0) {
+    reasons.push('No items extracted');
+  }
+  if (pricedItemsCount === 0 && !hasCommercialTotal) {
+    reasons.push('No prices found (neither line items nor commercial total)');
+  }
+  if (itemsCount > 0 && pricedItemsCount === 0) {
+    reasons.push('Items extracted but no unit prices found');
+  }
+  if (supplierNameIsSuspicious) {
+    reasons.push(`Supplier name "${supplierName}" looks like a reference code`);
+  }
+  
+  // Determine quality level
+  if (itemsCount === 0 || (pricedItemsCount === 0 && !hasCommercialTotal)) {
+    return { quality: 'bad', reasons };
+  }
+  if (pricedItemsCount < itemsCount * 0.2 || supplierNameIsSuspicious) {
+    return { quality: 'suspicious', reasons };
+  }
+  
+  return { quality: 'good', reasons: [] };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -90,39 +163,51 @@ serve(async (req) => {
 
     console.log(`Analyzing ${files.length} quotation files...`);
 
-    // Helper function to extract quotation from a single file
-    const extractQuotation = async (file: any, index: number): Promise<any> => {
-      console.log(`Processing file ${index + 1}/${files.length}: ${file.name}`);
-      
-      const extractionPrompt = `You are an expert procurement analyst. Extract ALL data from this supplier quotation document.
+    // Enhanced extraction prompt for retry attempts
+    const createExtractionPrompt = (isRetry: boolean, previousIssues?: string[]) => {
+      let prompt = `You are an expert procurement analyst. Extract ALL data from this supplier quotation document.
 
 CRITICAL REQUIREMENTS:
 1. Extract EXACT numeric values from the document - no estimates or defaults
 2. Remove currency symbols and commas from prices (e.g., "AED 15,000" → 15000)
 3. If a value is not found, use empty string "" for text or 0 for numbers
-4. Read the ENTIRE document carefully - prices are often in tables or at the bottom
+4. Read the ENTIRE document carefully - prices are often in tables or at the bottom`;
+
+      if (isRetry && previousIssues) {
+        prompt += `
+
+⚠️ PREVIOUS EXTRACTION FAILED - PAY SPECIAL ATTENTION:
+${previousIssues.map(i => `- ${i}`).join('\n')}
+
+CRITICAL: 
+- The SUPPLIER NAME must be the COMPANY NAME from letterhead/header - NOT a quotation reference number
+- Extract ALL line items from ANY tables in the document
+- Unit prices MUST be extracted for each item if available`;
+      }
+
+      prompt += `
 
 EXTRACT THESE FIELDS:
 
-SUPPLIER INFORMATION:
-- Company name (look for letterhead, header, or "From:" section)
+SUPPLIER INFORMATION (CRITICAL - must be the company name, NOT quote reference):
+- Company name (look for letterhead, header, company logo, or "From:" section - NOT the quotation number)
 - Full address
 - Contact person name
 - Phone number
 - Email address
 
 QUOTATION DETAILS:
-- Reference/Quote number
+- Reference/Quote number (THIS is where quote numbers like "QT-855" belong)
 - Date (format: YYYY-MM-DD)
 - Validity period in days
 
-LINE ITEMS (extract ALL items from the quotation):
+LINE ITEMS (extract ALL items from the quotation - VERY IMPORTANT):
 For each item find:
 - Item number
 - Description (full product/service description)
 - Unit of measure (EA, PC, SET, etc.)
 - Quantity
-- Unit price (NUMERIC ONLY)
+- Unit price (NUMERIC ONLY - extract from Rate/Price column)
 - Total price (NUMERIC ONLY, or calculate as quantity × unit price)
 
 COMMERCIAL TERMS:
@@ -157,6 +242,16 @@ Return ONLY this JSON structure:
   "technical": { "specifications": [], "brand": "", "model": "", "warranty": "", "compliance": [], "origin": "" }
 }`;
 
+      return prompt;
+    };
+
+    // Helper function to extract quotation from a single file
+    const extractQuotation = async (file: any, index: number, isRetry = false, previousIssues?: string[]): Promise<any> => {
+      const attemptLabel = isRetry ? ' (RETRY with stronger model)' : '';
+      console.log(`Processing file ${index + 1}/${files.length}: ${file.name}${attemptLabel}`);
+      
+      const extractionPrompt = createExtractionPrompt(isRetry, previousIssues);
+
       const messages: any[] = [
         { role: 'system', content: 'You are a procurement data extraction specialist. Extract data EXACTLY as it appears in the document. Return ONLY valid JSON - no explanations or markdown.' },
       ];
@@ -177,7 +272,6 @@ Return ONLY this JSON structure:
         });
       } else if (file.data) {
         // For PDFs and other binary files, use image_url format for vision AI
-        // This is the same approach used in extract-company-document
         const dataUrl = file.data.startsWith('data:') 
           ? file.data 
           : `data:application/pdf;base64,${file.data}`;
@@ -193,13 +287,14 @@ Return ONLY this JSON structure:
         });
       } else {
         console.error(`No content available for ${file.name}`);
-        return { error: `No content available for ${file.name}`, supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
+        return createPlaceholderQuotation(file.name, index, companySettings, 'No content available');
       }
 
       try {
-        // Use stronger model for better extraction with timeout
+        // Use stronger model for retry attempts
+        const model = isRetry ? 'google/gemini-2.5-pro' : 'google/gemini-2.5-flash';
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout for larger files
+        const timeoutId = setTimeout(() => controller.abort(), isRetry ? 120000 : 90000);
 
         const extractionResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
@@ -208,7 +303,7 @@ Return ONLY this JSON structure:
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'google/gemini-2.5-flash', // Stronger model for accurate extraction
+            model,
             max_completion_tokens: 4000,
             messages,
           }),
@@ -220,7 +315,7 @@ Return ONLY this JSON structure:
         if (!extractionResponse.ok) {
           const errorText = await extractionResponse.text();
           console.error(`AI extraction error for ${file.name}:`, extractionResponse.status, errorText);
-          return { error: `Extraction failed: ${extractionResponse.status}`, supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
+          return createPlaceholderQuotation(file.name, index, companySettings, `Extraction failed: ${extractionResponse.status}`);
         }
 
         const extractionData = await extractionResponse.json();
@@ -233,15 +328,15 @@ Return ONLY this JSON structure:
           return extracted;
         } else {
           console.error(`Failed to parse response for ${file.name}. Response preview:`, content.substring(0, 200));
-          return { error: 'JSON parse failed', supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
+          return createPlaceholderQuotation(file.name, index, companySettings, 'JSON parse failed');
         }
       } catch (e: any) {
         if (e.name === 'AbortError') {
-          console.error(`Extraction timeout for ${file.name} (90s exceeded)`);
-          return { error: 'Extraction timeout', supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
+          console.error(`Extraction timeout for ${file.name} (exceeded limit)`);
+          return createPlaceholderQuotation(file.name, index, companySettings, 'Extraction timeout');
         } else {
           console.error(`Failed to process ${file.name}:`, e.message);
-          return { error: e.message, supplier: { name: file.name.replace(/\.[^/.]+$/, ''), address: '', contact: '', phone: '', email: '' }, quotation: { reference: '', date: '', validityDays: 0 }, items: [], commercial: { subtotal: 0, tax: 0, total: 0, currency: companySettings?.currency || 'AED', deliveryTerms: '', paymentTerms: '', deliveryDays: 0 }, technical: { specifications: [], brand: '', model: '', warranty: '', compliance: [], origin: '' } };
+          return createPlaceholderQuotation(file.name, index, companySettings, e.message);
         }
       }
     };
@@ -249,25 +344,68 @@ Return ONLY this JSON structure:
     // Process all files in PARALLEL for speed
     console.log(`Starting parallel extraction of ${files.length} files...`);
     const extractionPromises = files.map((file: any, i: number) => extractQuotation(file, i));
-    const extractedQuotations = await Promise.all(extractionPromises);
-    console.log(`Parallel extraction complete for ${extractedQuotations.length} files`);
+    let extractedQuotations = await Promise.all(extractionPromises);
+    console.log(`Initial extraction complete for ${extractedQuotations.length} files`);
+
+    // Phase 1: Quality check and retry for suspicious extractions
+    for (let i = 0; i < extractedQuotations.length; i++) {
+      const extraction = extractedQuotations[i];
+      const quality = evaluateExtractionQuality(extraction);
+      
+      if (quality.quality !== 'good') {
+        console.log(`⚠️ File ${i + 1} has ${quality.quality} extraction quality: ${quality.reasons.join('; ')}`);
+        
+        // Retry with stronger model
+        console.log(`🔄 Retrying extraction for file ${i + 1} with enhanced model...`);
+        const retryResult = await extractQuotation(files[i], i, true, quality.reasons);
+        
+        // Evaluate retry quality
+        const retryQuality = evaluateExtractionQuality(retryResult);
+        if (retryQuality.quality === 'good' || 
+            (retryResult.items?.length || 0) > (extraction.items?.length || 0) ||
+            parseNumericValue(retryResult.commercial?.total) > parseNumericValue(extraction.commercial?.total)) {
+          console.log(`✓ Retry improved extraction for file ${i + 1}`);
+          extractedQuotations[i] = retryResult;
+        } else {
+          console.log(`⚠️ Retry did not improve extraction for file ${i + 1}, keeping original`);
+          // Mark as having extraction issues
+          if (quality.quality === 'bad') {
+            extractedQuotations[i]._extractionIssue = 'No items could be extracted from this quotation';
+          }
+        }
+      }
+    }
 
     console.log(`Extracted data from ${extractedQuotations.length} quotations`);
 
     // Validate and normalize all extracted quotations using parseNumericValue
     const validatedQuotations = extractedQuotations.map((q, index) => {
-      // Parse items with proper numeric handling
-      const items = Array.isArray(q?.items) ? q.items.map((item: any, idx: number) => ({
-        itemNo: item?.itemNo || idx + 1,
-        description: item?.description || '',
-        materialCode: item?.materialCode || '',
-        unit: item?.unit || 'EA',
-        quantity: parseNumericValue(item?.quantity) || 1,
-        unitPrice: parseNumericValue(item?.unitPrice),
-        totalPrice: parseNumericValue(item?.totalPrice),
-        discount: parseNumericValue(item?.discount),
-        vat: parseNumericValue(item?.vat)
-      })) : [];
+      // Parse items with proper numeric handling and derive missing values
+      const items = Array.isArray(q?.items) ? q.items.map((item: any, idx: number) => {
+        let unitPrice = parseNumericValue(item?.unitPrice);
+        let totalPrice = parseNumericValue(item?.totalPrice);
+        const quantity = parseNumericValue(item?.quantity) || 1;
+        
+        // Phase 2: Numeric fallbacks - derive missing prices
+        if (unitPrice === 0 && totalPrice > 0 && quantity > 0) {
+          unitPrice = totalPrice / quantity;
+        }
+        if (totalPrice === 0 && unitPrice > 0 && quantity > 0) {
+          totalPrice = unitPrice * quantity;
+        }
+        
+        return {
+          itemNo: item?.itemNo || idx + 1,
+          description: item?.description || '',
+          materialCode: item?.materialCode || '',
+          unit: item?.unit || 'EA',
+          quantity,
+          unitPrice,
+          totalPrice,
+          discount: parseNumericValue(item?.discount),
+          vat: parseNumericValue(item?.vat)
+        };
+      }) : [];
       
       // Parse commercial values with proper numeric handling
       let subtotal = parseNumericValue(q?.commercial?.subtotal);
@@ -291,20 +429,42 @@ Return ONLY this JSON structure:
         subtotal = total - tax;
       }
       
+      // Phase 3: Clean supplier name - use quotation reference as fallback displayName
+      let supplierName = q?.supplier?.name || '';
+      let quotationRef = q?.quotation?.reference || '';
+      
+      // If supplier name looks like a reference, try to use file name or mark appropriately
+      if (looksLikeReferenceCode(supplierName)) {
+        // The name might actually be the quotation reference
+        if (!quotationRef) {
+          quotationRef = supplierName;
+        }
+        // Try to get a better name from file or use generic
+        const fileName = files[index]?.name || '';
+        const cleanFileName = fileName.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ').trim();
+        if (cleanFileName && !looksLikeReferenceCode(cleanFileName) && cleanFileName.length > 5) {
+          supplierName = cleanFileName;
+        } else {
+          supplierName = `Supplier ${index + 1} (${quotationRef || 'Unknown'})`;
+        }
+      }
+      
       return {
         supplier: {
-          name: q?.supplier?.name || `Supplier ${index + 1}`,
+          name: supplierName,
           address: q?.supplier?.address || '',
           contact: q?.supplier?.contact || '',
           phone: q?.supplier?.phone || '',
           email: q?.supplier?.email || ''
         },
         quotation: {
-          reference: q?.quotation?.reference || `Q-${index + 1}`,
+          reference: quotationRef || `Q-${index + 1}`,
           date: q?.quotation?.date || new Date().toISOString().split('T')[0],
           validityDays: parseNumericValue(q?.quotation?.validityDays) || 30
         },
         items,
+        itemsExtracted: items.length,
+        pricedItemsCount: items.filter((i: any) => i.unitPrice > 0).length,
         commercial: {
           subtotal,
           tax,
@@ -324,7 +484,8 @@ Return ONLY this JSON structure:
           origin: q?.technical?.origin || '',
           deviations: Array.isArray(q?.technical?.deviations) ? q.technical.deviations : [],
           remarks: q?.technical?.remarks || ''
-        }
+        },
+        _extractionIssue: q?._extractionIssue || null
       };
     });
 
@@ -535,7 +696,6 @@ Provide accurate scores, identify the best options clearly, and give actionable 
     console.log('Analysis complete');
 
     // Build reliable item comparison matrix with STRICT matching to prevent false merges
-    // Each supplier's items are listed individually; only exact/near-exact matches are merged
     const buildItemComparisonMatrix = (quotations: any[]) => {
       const supplierNames = quotations.map(q => q.supplier.name);
       
@@ -630,9 +790,9 @@ Provide accurate scores, identify the best options clearly, and give actionable 
             // Skip if supplier already has this item (don't overwrite)
             if (canonicalItems[i].suppliers[supplierName]?.unitPrice > 0) continue;
             
-            const { score, exactCritical } = calculateSimilarity(rawDesc, canonicalItems[i].description);
+            const { score } = calculateSimilarity(rawDesc, canonicalItems[i].description);
             
-            // Only match if score meets threshold AND critical tokens match (if present)
+            // Only match if score meets threshold
             if (score >= SIMILARITY_THRESHOLD && score > bestScore) {
               bestScore = score;
               bestMatch = i;
@@ -716,10 +876,11 @@ Provide accurate scores, identify the best options clearly, and give actionable 
   }
 });
 
-function createPlaceholderQuotation(fileName: string, index: number, companySettings: any) {
+function createPlaceholderQuotation(fileName: string, index: number, companySettings: any, errorReason?: string) {
+  const cleanName = fileName.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ').trim();
   return {
     supplier: { 
-      name: fileName.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' '), 
+      name: cleanName || `Supplier ${index + 1}`, 
       address: '', 
       contact: '', 
       phone: '',
@@ -731,6 +892,8 @@ function createPlaceholderQuotation(fileName: string, index: number, companySett
       validityDays: 30 
     },
     items: [],
+    itemsExtracted: 0,
+    pricedItemsCount: 0,
     commercial: { 
       subtotal: 0, 
       tax: 0, 
@@ -750,7 +913,8 @@ function createPlaceholderQuotation(fileName: string, index: number, companySett
       origin: '',
       deviations: [],
       remarks: ''
-    }
+    },
+    _extractionIssue: errorReason || 'Extraction failed'
   };
 }
 
@@ -790,8 +954,8 @@ function createDefaultAnalysis(quotations: any[]) {
       fastestDelivery: supplierNames[0] || 'N/A',
       recommendation: 'Review all quotations carefully. Automated extraction requires manual verification for accuracy.',
       savingsPotential: 'Calculate after verifying extracted data',
-      notes: ['AI analysis completed', 'Manual verification recommended', 'Verify all prices and specifications'],
-      actionItems: ['Verify extracted data against original documents', 'Compare specifications in detail', 'Negotiate with preferred supplier']
+      notes: ['Extraction quality may vary', 'Manual review recommended'],
+      actionItems: ['Verify extracted prices', 'Confirm supplier details']
     }
   };
 }
