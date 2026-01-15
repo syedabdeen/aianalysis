@@ -221,9 +221,13 @@ export default function OfferAnalysisPage() {
     };
     
     try {
+      // Use descriptive title with vendor count instead of random vendor name
+      const vendorCount = extractedQuotations?.length || supplierColumns.length || 0;
+      const reportTitle = `Quotation Analysis - ${vendorCount} Vendor${vendorCount !== 1 ? 's' : ''}`;
+      
       const saved = await saveReport(
         'offer',
-        analysisResult.summary?.bestValue || 'Offer Analysis',
+        reportTitle,
         dataToSave,
         inputSummary
       );
@@ -593,9 +597,24 @@ export default function OfferAnalysisPage() {
                                 <TableCell className="text-center">{qty}</TableCell>
                                 <TableCell className="text-center">{item.unit || 'EA'}</TableCell>
                                 {supplierColumns.map(supplier => {
-                                  const supplierData = item.suppliers?.[supplier];
+                                  // Use fuzzy matching to find supplier data
+                                  let supplierData = item.suppliers?.[supplier];
+                                  if (!supplierData && item.suppliers) {
+                                    // Fuzzy match: check for partial name matches
+                                    const normalizeStr = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                                    const normalizedTarget = normalizeStr(supplier);
+                                    for (const key of Object.keys(item.suppliers)) {
+                                      const normalizedKey = normalizeStr(key);
+                                      if (normalizedKey.startsWith(normalizedTarget) || normalizedTarget.startsWith(normalizedKey) ||
+                                          normalizedKey.includes(normalizedTarget) || normalizedTarget.includes(normalizedKey)) {
+                                        supplierData = item.suppliers[key];
+                                        break;
+                                      }
+                                    }
+                                  }
+                                  
                                   const unitPrice = supplierData?.unitPrice || 0;
-                                  const amount = qty * unitPrice;
+                                  const amount = supplierData?.total || (qty * unitPrice);
                                   const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
                                   
                                   return (

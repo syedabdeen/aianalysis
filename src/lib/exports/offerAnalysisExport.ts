@@ -26,49 +26,91 @@ export interface AnalysisResult {
 
 // Get canonical supplier list from analysis result with fallback to extracted quotations
 export function getSupplierColumns(analysisResult: AnalysisResult, extractedQuotations?: any[]): string[] {
-  // Get suppliers from commercial comparison first (most reliable)
-  const commercialSuppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
-  if (commercialSuppliers.length > 0) return commercialSuppliers;
-  
-  // Fallback to technical comparison
-  const technicalSuppliers = Object.keys(analysisResult.technicalComparison?.[0]?.suppliers || {});
-  if (technicalSuppliers.length > 0) return technicalSuppliers;
-  
-  // Fallback to extracted quotations (for backward compatibility with saved reports)
+  // Priority 1: Use extractedQuotations (has full names that match itemComparisonMatrix)
   if (extractedQuotations && extractedQuotations.length > 0) {
-    return extractedQuotations.map(q => q.supplier?.name).filter(Boolean);
+    const names = extractedQuotations
+      .map(q => q.supplier?.name)
+      .filter((name): name is string => Boolean(name));
+    if (names.length > 0) return names;
+  }
+  
+  // Priority 2: Get from itemComparisonMatrix suppliers (full names)
+  if ((analysisResult as any).itemComparisonMatrix && (analysisResult as any).itemComparisonMatrix.length > 0) {
+    const firstItem = (analysisResult as any).itemComparisonMatrix[0];
+    if (firstItem.suppliers) {
+      const supplierNames = Object.keys(firstItem.suppliers);
+      if (supplierNames.length > 0) return supplierNames;
+    }
+  }
+  
+  // Priority 3: Try commercial comparison (may be truncated)
+  if (analysisResult.commercialComparison) {
+    const commercialSuppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
+    if (commercialSuppliers.length > 0) return commercialSuppliers;
+  }
+  
+  // Priority 4: Try technical comparison
+  if (analysisResult.technicalComparison) {
+    const technicalSuppliers = Object.keys(analysisResult.technicalComparison?.[0]?.suppliers || {});
+    if (technicalSuppliers.length > 0) return technicalSuppliers;
   }
   
   return [];
 }
 
-// Find supplier data with fallback matching (handles truncated names in saved reports)
+// Normalize string for fuzzy comparison
+function normalizeForMatch(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Find supplier data with fuzzy matching (handles truncated/mismatched names)
 export function findSupplierData(
   suppliers: Record<string, any>,
   supplierName: string,
   extractedQuotations?: any[]
 ): any | undefined {
-  // Direct match first
+  if (!suppliers) return undefined;
+  
+  // Exact match first
   if (suppliers[supplierName]) return suppliers[supplierName];
   
-  // Try prefix match (for truncated names)
+  const normalizedTarget = normalizeForMatch(supplierName);
+  
+  // Try prefix match (truncated name vs full name)
   for (const key of Object.keys(suppliers)) {
-    if (key.startsWith(supplierName.substring(0, 20)) || supplierName.startsWith(key.substring(0, 20))) {
+    if (key.startsWith(supplierName) || supplierName.startsWith(key)) {
+      return suppliers[key];
+    }
+    // Normalized prefix match
+    const normalizedKey = normalizeForMatch(key);
+    if (normalizedKey.startsWith(normalizedTarget) || normalizedTarget.startsWith(normalizedKey)) {
       return suppliers[key];
     }
   }
   
-  // Try matching via extracted quotations
+  // Try substring match for partial names
+  for (const key of Object.keys(suppliers)) {
+    const normalizedKey = normalizeForMatch(key);
+    if (normalizedKey.includes(normalizedTarget) || normalizedTarget.includes(normalizedKey)) {
+      return suppliers[key];
+    }
+  }
+  
+  // Try matching against extracted quotations
   if (extractedQuotations) {
-    const quotation = extractedQuotations.find(q => 
-      q.supplier?.name === supplierName || 
-      q.supplier?.name?.startsWith(supplierName.substring(0, 20))
-    );
-    if (quotation) {
-      // Find in suppliers by any similar name
-      for (const key of Object.keys(suppliers)) {
-        if (quotation.supplier.name.includes(key.substring(0, 15)) || key.includes(quotation.supplier.name.substring(0, 15))) {
-          return suppliers[key];
+    for (const quotation of extractedQuotations) {
+      const fullName = quotation.supplier?.name;
+      if (fullName) {
+        const normalizedFull = normalizeForMatch(fullName);
+        if (normalizedFull.startsWith(normalizedTarget) || normalizedTarget.startsWith(normalizedFull) ||
+            normalizedFull.includes(normalizedTarget) || normalizedTarget.includes(normalizedFull)) {
+          // Found the match, now try to find it in suppliers
+          if (suppliers[fullName]) return suppliers[fullName];
+          for (const key of Object.keys(suppliers)) {
+            if (normalizeForMatch(key) === normalizedFull) {
+              return suppliers[key];
+            }
+          }
         }
       }
     }
@@ -367,9 +409,10 @@ export async function generateOfferAnalysisPDF(
       
       // Render supplier data in canonical order
       suppliers.forEach((supplier) => {
-        const supplierData = item.suppliers?.[supplier];
+        // Use fuzzy matching for supplier data
+        const supplierData = findSupplierData(item.suppliers || {}, supplier, extractedQuotations);
         const unitPrice = supplierData?.unitPrice || 0;
-        const amount = qty * unitPrice;
+        const amount = supplierData?.total || (qty * unitPrice);
         const isLowest = item.lowestSupplier === supplier && unitPrice > 0;
         
         if (isLowest) {
@@ -562,8 +605,8 @@ export function generateOfferAnalysisExcel(
   extractedQuotations: any[],
   reportRef: string
 ): void {
-  // Get canonical supplier columns
-  const suppliers = getSupplierColumns(analysisResult);
+  // Get canonical supplier columns from extractedQuotations (full names)
+  const suppliers = getSupplierColumns(analysisResult, extractedQuotations);
   
   let csv = 'QUOTATION COMPARATIVE STATEMENT\n';
   csv += `Report Reference,${reportRef}\n`;
@@ -572,14 +615,20 @@ export function generateOfferAnalysisExcel(
   csv += 'COMMERCIAL COMPARISON\n';
   csv += `Criteria,${suppliers.join(',')}\n`;
   analysisResult.commercialComparison.forEach(row => {
-    // Use canonical supplier order
-    csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || '—'}"`).join(',')}\n`;
+    // Use fuzzy matching for supplier data
+    csv += `"${row.criteria}",${suppliers.map(s => {
+      const data = findSupplierData(row.suppliers || {}, s, extractedQuotations);
+      return `"${data?.value || '—'}"`;
+    }).join(',')}\n`;
   });
   
   csv += '\nTECHNICAL COMPARISON\n';
   csv += `Criteria,${suppliers.join(',')}\n`;
   analysisResult.technicalComparison.forEach(row => {
-    csv += `"${row.criteria}",${suppliers.map(s => `"${row.suppliers[s]?.value || '—'} (${row.suppliers[s]?.score || 0})"`).join(',')}\n`;
+    csv += `"${row.criteria}",${suppliers.map(s => {
+      const data = findSupplierData(row.suppliers || {}, s, extractedQuotations);
+      return `"${data?.value || '—'} (${data?.score || 0})"`;
+    }).join(',')}\n`;
   });
   
   if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
@@ -588,10 +637,11 @@ export function generateOfferAnalysisExcel(
     itemComparisonMatrix.forEach((item, idx) => {
       const qty = item.quantity || 1;
       const unit = item.unit || 'EA';
-      // Use canonical supplier order
+      // Use fuzzy matching for supplier data
       const vendorData = suppliers.flatMap(s => {
-        const rate = item.suppliers?.[s]?.unitPrice || 0;
-        const amount = qty * rate;
+        const supplierData = findSupplierData(item.suppliers || {}, s, extractedQuotations);
+        const rate = supplierData?.unitPrice || 0;
+        const amount = supplierData?.total || (qty * rate);
         return [rate > 0 ? rate : '—', amount > 0 ? amount : '—'];
       }).join(',');
       csv += `${idx + 1},"${(item.item || '').replace(/"/g, "'")}",${qty},${unit},${vendorData},${(item.lowestTotal || 0) > 0 ? item.lowestTotal : '—'},${(item.averageTotal || 0) > 0 ? Math.round(item.averageTotal || 0) : '—'}\n`;

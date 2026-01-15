@@ -58,10 +58,10 @@ export function ReportCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2 mb-2">
               <div>
-                <Badge variant="outline" className="mb-1 font-mono text-xs">
+                <h3 className="font-semibold text-lg truncate font-mono">
                   {report.sequenceNumber}
-                </Badge>
-                <h3 className="font-semibold text-lg truncate">{report.title}</h3>
+                </h3>
+                <p className="text-sm text-muted-foreground truncate">{report.title}</p>
               </div>
               <Badge className={cn(
                 isMarket 
