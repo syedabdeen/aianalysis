@@ -231,27 +231,35 @@ export default function MarketAnalysisPage() {
     }
   };
 
-  const handleSaveReport = () => {
+  const handleSaveReport = async () => {
     if (!analysis) return;
     
     const manufacturers = analysis.manufacturers?.length || 0;
     const suppliers = analysis.suppliers?.length || 0;
     const inputSummary = `${manufacturers} Manufacturers, ${suppliers} Suppliers`;
     
-    const saved = saveReport(
-      'market',
-      analysis.product?.name || textInput || 'Market Analysis',
-      analysis,
-      inputSummary
-    );
-    
-    setIsSaved(true);
-    setShowSaveDialog(false);
-    
-    toast({
-      title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
-      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
-    });
+    try {
+      const saved = await saveReport(
+        'market',
+        analysis.product?.name || textInput || 'Market Analysis',
+        analysis,
+        inputSummary
+      );
+      
+      setIsSaved(true);
+      setShowSaveDialog(false);
+      
+      toast({
+        title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
+        description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: error.message || 'Failed to save report',
+        variant: 'destructive',
+      });
+    }
   };
 
   const fileToBase64 = (file: File): Promise<string> => {

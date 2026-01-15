@@ -204,7 +204,7 @@ export default function OfferAnalysisPage() {
     }
   };
 
-  const handleSaveReport = () => {
+  const handleSaveReport = async () => {
     if (!analysisResult) return;
     
     const suppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
@@ -217,22 +217,30 @@ export default function OfferAnalysisPage() {
       extractedQuotations,
     };
     
-    const saved = saveReport(
-      'offer',
-      analysisResult.summary?.bestValue || 'Offer Analysis',
-      dataToSave,
-      inputSummary
-    );
-    
-    setIsSaved(true);
-    toast({
-      title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
-      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
-    });
-    
-    // Navigate to home after saving - use /analyzer if on analyzer path
-    const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
-    setTimeout(() => navigate(homePath), 1000);
+    try {
+      const saved = await saveReport(
+        'offer',
+        analysisResult.summary?.bestValue || 'Offer Analysis',
+        dataToSave,
+        inputSummary
+      );
+      
+      setIsSaved(true);
+      toast({
+        title: language === 'ar' ? 'تم الحفظ' : 'Report Saved',
+        description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Report saved as'} ${saved.sequenceNumber}`,
+      });
+      
+      // Navigate to home after saving - use /analyzer if on analyzer path
+      const homePath = window.location.pathname.startsWith('/analyzer') ? '/analyzer' : '/';
+      setTimeout(() => navigate(homePath), 1000);
+    } catch (error: any) {
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: error.message || 'Failed to save report',
+        variant: 'destructive',
+      });
+    }
   };
 
   const loadImageForPDF = (url: string): Promise<HTMLImageElement | null> => {

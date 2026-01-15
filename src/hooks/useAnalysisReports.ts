@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 export interface StoredReport {
   id: string;
@@ -10,92 +13,137 @@ export interface StoredReport {
   inputSummary: string;
 }
 
-interface ReportCounters {
-  market: { [year: string]: number };
-  offer: { [year: string]: number };
+interface DbReport {
+  id: string;
+  user_id: string;
+  sequence_number: string;
+  type: string;
+  title: string;
+  input_summary: string | null;
+  analysis_data: any;
+  created_at: string;
+  updated_at: string;
 }
 
-const REPORTS_STORAGE_KEY = 'ai_analyzer_reports';
-const COUNTERS_STORAGE_KEY = 'ai_analyzer_report_counters';
+// Transform database record to StoredReport interface
+const transformDbToStoredReport = (dbReport: DbReport): StoredReport => ({
+  id: dbReport.id,
+  sequenceNumber: dbReport.sequence_number,
+  type: dbReport.type as 'market' | 'offer',
+  title: dbReport.title,
+  createdAt: dbReport.created_at,
+  analysisData: dbReport.analysis_data,
+  inputSummary: dbReport.input_summary || '',
+});
 
 export function useAnalysisReports() {
-  const [reports, setReports] = useState<StoredReport[]>([]);
-  const [counters, setCounters] = useState<ReportCounters>({ market: {}, offer: {} });
-  const [isLoaded, setIsLoaded] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
 
-  // Load reports and counters from localStorage
-  useEffect(() => {
-    try {
-      const savedReports = localStorage.getItem(REPORTS_STORAGE_KEY);
-      const savedCounters = localStorage.getItem(COUNTERS_STORAGE_KEY);
-      
-      if (savedReports) {
-        setReports(JSON.parse(savedReports));
-      }
-      if (savedCounters) {
-        setCounters(JSON.parse(savedCounters));
-      }
-    } catch (e) {
-      console.error('Failed to load reports:', e);
-    }
-    setIsLoaded(true);
-  }, []);
+  // Fetch all reports for the current user
+  const { data: reports = [], isLoading, refetch } = useQuery({
+    queryKey: ['analysis-reports'],
+    queryFn: async (): Promise<StoredReport[]> => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return [];
 
-  // Generate next sequence number
-  const generateSequenceNumber = useCallback((type: 'market' | 'offer'): string => {
-    const year = new Date().getFullYear().toString();
-    const prefix = type === 'market' ? 'MA' : 'OA';
-    
-    const currentCount = counters[type][year] || 0;
-    const nextCount = currentCount + 1;
-    
-    // Update counters
-    const newCounters = {
-      ...counters,
-      [type]: {
-        ...counters[type],
-        [year]: nextCount,
-      },
-    };
-    setCounters(newCounters);
-    localStorage.setItem(COUNTERS_STORAGE_KEY, JSON.stringify(newCounters));
-    
-    // Format: MA-2026-0001 or OA-2026-0001
-    return `${prefix}-${year}-${nextCount.toString().padStart(4, '0')}`;
-  }, [counters]);
+      const { data, error } = await supabase
+        .from('analysis_reports')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching reports:', error);
+        return [];
+      }
+
+      return (data as DbReport[]).map(transformDbToStoredReport);
+    },
+  });
 
   // Save a new report
-  const saveReport = useCallback((
+  const saveReportMutation = useMutation({
+    mutationFn: async ({ 
+      type, 
+      title, 
+      analysisData, 
+      inputSummary 
+    }: { 
+      type: 'market' | 'offer'; 
+      title: string; 
+      analysisData: any; 
+      inputSummary: string;
+    }): Promise<StoredReport> => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+
+      // Get sequence number from database function
+      const { data: sequenceNumber, error: seqError } = await supabase
+        .rpc('get_analysis_report_sequence', { _type: type });
+
+      if (seqError) {
+        console.error('Error generating sequence:', seqError);
+        throw new Error('Failed to generate report number');
+      }
+
+      // Insert the report
+      const { data, error } = await supabase
+        .from('analysis_reports')
+        .insert({
+          user_id: user.id,
+          sequence_number: sequenceNumber,
+          type,
+          title,
+          analysis_data: analysisData,
+          input_summary: inputSummary,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error saving report:', error);
+        throw new Error('Failed to save report');
+      }
+
+      return transformDbToStoredReport(data as DbReport);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['analysis-reports'] });
+    },
+  });
+
+  // Delete a report
+  const deleteReportMutation = useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const { error } = await supabase
+        .from('analysis_reports')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.error('Error deleting report:', error);
+        throw new Error('Failed to delete report');
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['analysis-reports'] });
+    },
+  });
+
+  // Save report function (async)
+  const saveReport = useCallback(async (
     type: 'market' | 'offer',
     title: string,
     analysisData: any,
     inputSummary: string
-  ): StoredReport => {
-    const sequenceNumber = generateSequenceNumber(type);
-    
-    const newReport: StoredReport = {
-      id: crypto.randomUUID(),
-      sequenceNumber,
-      type,
-      title,
-      createdAt: new Date().toISOString(),
-      analysisData,
-      inputSummary,
-    };
-    
-    const updatedReports = [newReport, ...reports];
-    setReports(updatedReports);
-    localStorage.setItem(REPORTS_STORAGE_KEY, JSON.stringify(updatedReports));
-    
-    return newReport;
-  }, [reports, generateSequenceNumber]);
+  ): Promise<StoredReport> => {
+    return saveReportMutation.mutateAsync({ type, title, analysisData, inputSummary });
+  }, [saveReportMutation]);
 
-  // Delete a report
-  const deleteReport = useCallback((id: string) => {
-    const updatedReports = reports.filter(r => r.id !== id);
-    setReports(updatedReports);
-    localStorage.setItem(REPORTS_STORAGE_KEY, JSON.stringify(updatedReports));
-  }, [reports]);
+  // Delete report function (async)
+  const deleteReport = useCallback(async (id: string): Promise<void> => {
+    return deleteReportMutation.mutateAsync(id);
+  }, [deleteReportMutation]);
 
   // Get reports by type
   const getReportsByType = useCallback((type: 'market' | 'offer'): StoredReport[] => {
@@ -113,12 +161,16 @@ export function useAnalysisReports() {
 
   return {
     reports,
-    isLoaded,
+    isLoading,
+    isLoaded: !isLoading,
     saveReport,
     deleteReport,
     getReportsByType,
     getReportById,
     marketReportsCount,
     offerReportsCount,
+    isSaving: saveReportMutation.isPending,
+    isDeleting: deleteReportMutation.isPending,
+    refetch,
   };
 }
