@@ -3139,6 +3139,9 @@ export type Database = {
       }
       users_extended: {
         Row: {
+          device_bound_at: string | null
+          device_id: string | null
+          device_info: Json | null
           email: string
           registered_at: string | null
           user_id: string
@@ -3146,6 +3149,9 @@ export type Database = {
           valid_until: string
         }
         Insert: {
+          device_bound_at?: string | null
+          device_id?: string | null
+          device_info?: Json | null
           email: string
           registered_at?: string | null
           user_id: string
@@ -3153,6 +3159,9 @@ export type Database = {
           valid_until?: string
         }
         Update: {
+          device_bound_at?: string | null
+          device_id?: string | null
+          device_info?: Json | null
           email?: string
           registered_at?: string | null
           user_id?: string

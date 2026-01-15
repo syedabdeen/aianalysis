@@ -48,19 +48,23 @@ import {
   XCircle,
   Key,
   Eye,
-  EyeOff
+  EyeOff,
+  Smartphone,
+  RotateCcw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const AdminDashboardPage = () => {
   const navigate = useNavigate();
-  const { users, loading, fetchUsers, updateUser, deleteUser, extendValidity, resetPassword } = useUsersExtended();
+  const { users, loading, fetchUsers, updateUser, deleteUser, extendValidity, resetPassword, resetDevice } = useUsersExtended();
   
   const [selectedUser, setSelectedUser] = useState<UserExtended | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [extendDialogOpen, setExtendDialogOpen] = useState(false);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
+  const [resetDeviceDialogOpen, setResetDeviceDialogOpen] = useState(false);
+  const [isResettingDevice, setIsResettingDevice] = useState(false);
   
   // Edit form state
   const [editEmail, setEditEmail] = useState('');
@@ -138,6 +142,26 @@ const AdminDashboardPage = () => {
     setConfirmPassword('');
     setShowNewPassword(false);
     setResetPasswordDialogOpen(true);
+  };
+
+  const handleResetDevice = (user: UserExtended) => {
+    setSelectedUser(user);
+    setResetDeviceDialogOpen(true);
+  };
+
+  const handleConfirmResetDevice = async () => {
+    if (!selectedUser) return;
+    
+    setIsResettingDevice(true);
+    const result = await resetDevice(selectedUser.user_id);
+
+    if (result.success) {
+      toast.success('Device binding reset successfully. User can now login from a new device.');
+      setResetDeviceDialogOpen(false);
+    } else {
+      toast.error(result.error || 'Failed to reset device binding');
+    }
+    setIsResettingDevice(false);
   };
 
   const handleConfirmResetPassword = async () => {
@@ -262,6 +286,7 @@ const AdminDashboardPage = () => {
                     <TableHead>Username</TableHead>
                     <TableHead>Registered</TableHead>
                     <TableHead>Valid Until</TableHead>
+                    <TableHead>Device</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -273,6 +298,18 @@ const AdminDashboardPage = () => {
                       <TableCell>{user.username}</TableCell>
                       <TableCell>{format(new Date(user.registered_at), 'PPp')}</TableCell>
                       <TableCell>{format(new Date(user.valid_until), 'PPp')}</TableCell>
+                      <TableCell>
+                        {user.device_id ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-500/10 text-blue-600">
+                            <Smartphone className="mr-1 h-3 w-3" />
+                            Bound
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground">
+                            Not bound
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         {isExpired(user.valid_until) ? (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-destructive/10 text-destructive">
@@ -296,10 +333,21 @@ const AdminDashboardPage = () => {
                             <Plus className="mr-1 h-3 w-3" />
                             Extend
                           </Button>
+                          {user.device_id && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleResetDevice(user)}
+                              title="Reset Device Binding"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => handleResetPassword(user)}
+                            title="Reset Password"
                           >
                             <Key className="h-3 w-3" />
                           </Button>
@@ -307,6 +355,7 @@ const AdminDashboardPage = () => {
                             variant="outline"
                             size="sm"
                             onClick={() => handleEdit(user)}
+                            title="Edit User"
                           >
                             <Edit className="h-3 w-3" />
                           </Button>
@@ -315,6 +364,7 @@ const AdminDashboardPage = () => {
                             size="sm"
                             onClick={() => handleDelete(user)}
                             className="text-destructive hover:text-destructive"
+                            title="Delete User"
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
@@ -324,7 +374,7 @@ const AdminDashboardPage = () => {
                   ))}
                   {users.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                         No users found
                       </TableCell>
                     </TableRow>
@@ -546,6 +596,31 @@ const AdminDashboardPage = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reset Device Dialog */}
+      <AlertDialog open={resetDeviceDialogOpen} onOpenChange={setResetDeviceDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <RotateCcw className="h-5 w-5" />
+              Reset Device Binding
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>Are you sure you want to reset the device binding for <strong>{selectedUser?.email}</strong>?</p>
+              <p className="text-sm">This will allow the user to login from a new device. Their current device will no longer have access until they login again.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmResetDevice}
+              disabled={isResettingDevice}
+            >
+              {isResettingDevice ? 'Resetting...' : 'Reset Device'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
