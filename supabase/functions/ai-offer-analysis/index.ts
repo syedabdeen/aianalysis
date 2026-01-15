@@ -534,47 +534,82 @@ Provide accurate scores, identify the best options clearly, and give actionable 
 
     console.log('Analysis complete');
 
-    // Build reliable item comparison matrix with fuzzy matching for item descriptions
+    // Build reliable item comparison matrix with STRICT matching to prevent false merges
+    // Each supplier's items are listed individually; only exact/near-exact matches are merged
     const buildItemComparisonMatrix = (quotations: any[]) => {
       const supplierNames = quotations.map(q => q.supplier.name);
       
-      // Normalize description for matching
+      // Normalize description for matching - extract critical identifiers
       const normalizeDesc = (desc: string): string => {
         return (desc || '')
           .toLowerCase()
-          .replace(/[^\w\s]/g, ' ')
+          .replace(/[^\w\s\d.-]/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
       };
       
-      // Calculate similarity between two descriptions (Jaccard + prefix)
-      const similarity = (a: string, b: string): number => {
-        const tokensA = new Set(normalizeDesc(a).split(' ').filter(t => t.length > 2));
-        const tokensB = new Set(normalizeDesc(b).split(' ').filter(t => t.length > 2));
-        if (tokensA.size === 0 || tokensB.size === 0) return 0;
+      // Extract critical tokens (part numbers, dimensions, specifications)
+      const extractCriticalTokens = (desc: string): Set<string> => {
+        const normalized = normalizeDesc(desc);
+        const tokens = new Set<string>();
         
-        const intersection = new Set([...tokensA].filter(x => tokensB.has(x)));
-        const union = new Set([...tokensA, ...tokensB]);
-        const jaccard = intersection.size / union.size;
+        // Extract alphanumeric codes (like 1CX70, 4CX300, ISO9001)
+        const codeMatches = normalized.match(/\b[a-z]*\d+[a-z\d]*\b/gi) || [];
+        codeMatches.forEach(m => tokens.add(m.toLowerCase()));
         
-        // Prefix bonus
-        const normA = normalizeDesc(a);
-        const normB = normalizeDesc(b);
-        const prefixLen = Math.min(normA.length, normB.length, 30);
-        const prefixMatch = normA.substring(0, prefixLen) === normB.substring(0, prefixLen) ? 0.2 : 0;
+        // Extract dimension patterns (like 70mm, 300sqmm, 2x4)
+        const dimMatches = normalized.match(/\d+(?:\.\d+)?(?:mm|cm|m|sqmm|kv|awg|x\d+)/gi) || [];
+        dimMatches.forEach(m => tokens.add(m.toLowerCase()));
         
-        return Math.min(jaccard + prefixMatch, 1);
+        return tokens;
       };
       
-      // Canonical items with fuzzy matching
+      // Calculate similarity - STRICT matching with high threshold
+      const calculateSimilarity = (descA: string, descB: string): { score: number; exactCritical: boolean } => {
+        const normA = normalizeDesc(descA);
+        const normB = normalizeDesc(descB);
+        
+        // Exact match
+        if (normA === normB) return { score: 1.0, exactCritical: true };
+        
+        // Critical tokens must match for technical items
+        const criticalA = extractCriticalTokens(descA);
+        const criticalB = extractCriticalTokens(descB);
+        
+        // If either has critical tokens, they must overlap significantly
+        if (criticalA.size > 0 && criticalB.size > 0) {
+          const intersection = new Set([...criticalA].filter(x => criticalB.has(x)));
+          const union = new Set([...criticalA, ...criticalB]);
+          const criticalOverlap = intersection.size / union.size;
+          
+          // If critical tokens don't match well, don't merge
+          if (criticalOverlap < 0.7) {
+            return { score: criticalOverlap * 0.5, exactCritical: false };
+          }
+        }
+        
+        // Token-based Jaccard similarity (words only)
+        const wordsA = new Set(normA.split(' ').filter(t => t.length > 2));
+        const wordsB = new Set(normB.split(' ').filter(t => t.length > 2));
+        if (wordsA.size === 0 || wordsB.size === 0) return { score: 0, exactCritical: false };
+        
+        const intersection = new Set([...wordsA].filter(x => wordsB.has(x)));
+        const union = new Set([...wordsA, ...wordsB]);
+        const jaccard = intersection.size / union.size;
+        
+        return { score: jaccard, exactCritical: criticalA.size > 0 && criticalB.size > 0 };
+      };
+      
+      // Canonical items with STRICT matching - high threshold to prevent false merges
       const canonicalItems: Array<{
         description: string;
-        normalizedKey: string;
         unit: string;
+        criticalTokens: Set<string>;
         suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit?: string }>;
       }> = [];
       
-      const SIMILARITY_THRESHOLD = 0.65;
+      // VERY HIGH threshold - only merge near-exact matches
+      const SIMILARITY_THRESHOLD = 0.92;
       
       quotations.forEach(q => {
         const supplierName = q.supplier.name;
@@ -587,30 +622,36 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           const quantity = parseNumericValue(item.quantity) || 1;
           const total = parseNumericValue(item.totalPrice) || (unitPrice * quantity);
           
-          // Find best matching canonical item
+          // Find best matching canonical item (STRICT)
           let bestMatch = -1;
           let bestScore = 0;
+          
           for (let i = 0; i < canonicalItems.length; i++) {
-            const score = similarity(rawDesc, canonicalItems[i].description);
-            if (score > bestScore && score >= SIMILARITY_THRESHOLD) {
+            // Skip if supplier already has this item (don't overwrite)
+            if (canonicalItems[i].suppliers[supplierName]?.unitPrice > 0) continue;
+            
+            const { score, exactCritical } = calculateSimilarity(rawDesc, canonicalItems[i].description);
+            
+            // Only match if score meets threshold AND critical tokens match (if present)
+            if (score >= SIMILARITY_THRESHOLD && score > bestScore) {
               bestScore = score;
               bestMatch = i;
             }
           }
           
-          if (bestMatch >= 0) {
+          if (bestMatch >= 0 && bestScore >= SIMILARITY_THRESHOLD) {
             // Add to existing canonical item
             canonicalItems[bestMatch].suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
-            // Use longer description as canonical
+            // Use longer/more descriptive description as canonical
             if (rawDesc.length > canonicalItems[bestMatch].description.length) {
-              canonicalItems[bestMatch].description = rawDesc.substring(0, 100);
+              canonicalItems[bestMatch].description = rawDesc;
             }
           } else {
-            // Create new canonical item
+            // Create NEW canonical item (don't merge if uncertain)
             const newItem = {
-              description: rawDesc.substring(0, 100),
-              normalizedKey: normalizeDesc(rawDesc),
+              description: rawDesc,
               unit: itemUnit,
+              criticalTokens: extractCriticalTokens(rawDesc),
               suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' }]))
             };
             newItem.suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
@@ -619,11 +660,15 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         });
       });
       
+      console.log(`Created ${canonicalItems.length} canonical items from quotations`);
+      
       // Convert to result array with lowest/avg calculations
       return canonicalItems.map(data => {
+        // Use max quantity from any supplier for consistency
         const quantities = Object.values(data.suppliers).map(s => s.quantity).filter(q => q > 0);
-        const quantity = quantities.length > 0 ? quantities[0] : 1;
+        const quantity = quantities.length > 0 ? Math.max(...quantities) : 1;
         
+        // Calculate line totals for suppliers who quoted
         const lineTotals = Object.values(data.suppliers)
           .map(s => s.unitPrice > 0 ? (quantity * s.unitPrice) : 0)
           .filter(t => t > 0);
@@ -631,8 +676,10 @@ Provide accurate scores, identify the best options clearly, and give actionable 
         const lowestTotal = lineTotals.length > 0 ? Math.min(...lineTotals) : 0;
         const averageTotal = lineTotals.length > 0 ? lineTotals.reduce((a, b) => a + b, 0) / lineTotals.length : 0;
         
+        // Find supplier with lowest total
         const lowestSupplier = Object.entries(data.suppliers)
-          .find(([_, v]) => v.unitPrice > 0 && (quantity * v.unitPrice) === lowestTotal)?.[0] || '';
+          .filter(([_, v]) => v.unitPrice > 0)
+          .sort((a, b) => (quantity * a[1].unitPrice) - (quantity * b[1].unitPrice))[0]?.[0] || '';
         
         return {
           item: data.description,
@@ -647,7 +694,7 @@ Provide accurate scores, identify the best options clearly, and give actionable 
     };
     
     const itemComparisonMatrix = buildItemComparisonMatrix(validatedQuotations);
-    console.log(`Built item comparison matrix with ${itemComparisonMatrix.length} items`);
+    console.log(`Built item comparison matrix with ${itemComparisonMatrix.length} items (from ${validatedQuotations.reduce((sum, q) => sum + (q.items?.length || 0), 0)} total extracted items)`);
 
     return new Response(
       JSON.stringify({

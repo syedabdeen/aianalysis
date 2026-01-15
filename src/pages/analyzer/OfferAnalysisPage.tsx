@@ -61,8 +61,10 @@ export default function OfferAnalysisPage() {
   const [isViewMode, setIsViewMode] = useState(false);
   const [savedReportRef, setSavedReportRef] = useState<string>('');
 
-  // Get canonical supplier columns
-  const supplierColumns = analysisResult ? getSupplierColumns(analysisResult) : [];
+  // Get canonical supplier columns with fallback to extracted quotations for saved reports
+  const supplierColumns = analysisResult 
+    ? getSupplierColumns(analysisResult, extractedQuotations) 
+    : [];
 
   // Handle viewing saved report
   useEffect(() => {
