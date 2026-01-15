@@ -24,8 +24,8 @@ export interface AnalysisResult {
   summary: { lowestEvaluated: string; bestValue: string; recommendation: string; notes: string[] };
 }
 
-// Get canonical supplier list from analysis result
-export function getSupplierColumns(analysisResult: AnalysisResult): string[] {
+// Get canonical supplier list from analysis result with fallback to extracted quotations
+export function getSupplierColumns(analysisResult: AnalysisResult, extractedQuotations?: any[]): string[] {
   // Get suppliers from commercial comparison first (most reliable)
   const commercialSuppliers = Object.keys(analysisResult.commercialComparison?.[0]?.suppliers || {});
   if (commercialSuppliers.length > 0) return commercialSuppliers;
@@ -34,7 +34,47 @@ export function getSupplierColumns(analysisResult: AnalysisResult): string[] {
   const technicalSuppliers = Object.keys(analysisResult.technicalComparison?.[0]?.suppliers || {});
   if (technicalSuppliers.length > 0) return technicalSuppliers;
   
+  // Fallback to extracted quotations (for backward compatibility with saved reports)
+  if (extractedQuotations && extractedQuotations.length > 0) {
+    return extractedQuotations.map(q => q.supplier?.name).filter(Boolean);
+  }
+  
   return [];
+}
+
+// Find supplier data with fallback matching (handles truncated names in saved reports)
+export function findSupplierData(
+  suppliers: Record<string, any>,
+  supplierName: string,
+  extractedQuotations?: any[]
+): any | undefined {
+  // Direct match first
+  if (suppliers[supplierName]) return suppliers[supplierName];
+  
+  // Try prefix match (for truncated names)
+  for (const key of Object.keys(suppliers)) {
+    if (key.startsWith(supplierName.substring(0, 20)) || supplierName.startsWith(key.substring(0, 20))) {
+      return suppliers[key];
+    }
+  }
+  
+  // Try matching via extracted quotations
+  if (extractedQuotations) {
+    const quotation = extractedQuotations.find(q => 
+      q.supplier?.name === supplierName || 
+      q.supplier?.name?.startsWith(supplierName.substring(0, 20))
+    );
+    if (quotation) {
+      // Find in suppliers by any similar name
+      for (const key of Object.keys(suppliers)) {
+        if (quotation.supplier.name.includes(key.substring(0, 15)) || key.includes(quotation.supplier.name.substring(0, 15))) {
+          return suppliers[key];
+        }
+      }
+    }
+  }
+  
+  return undefined;
 }
 
 // Load image for PDF
@@ -206,12 +246,12 @@ export async function generateOfferAnalysisPDF(
   doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
   yPos += 12;
   
-  // ===== 3. ITEM-WISE PRICE COMPARISON =====
+  // ===== 3. ITEM-WISE PRICE COMPARISON (ALL ITEMS with pagination) =====
   if (itemComparisonMatrix && itemComparisonMatrix.length > 0) {
     checkNewPage(60);
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text('3. Item-wise Price Comparison', margin, yPos);
+    doc.text(`3. Item-wise Price Comparison (${itemComparisonMatrix.length} items)`, margin, yPos);
     yPos += 8;
     
     const colNo = 8;
@@ -225,67 +265,85 @@ export async function generateOfferAnalysisPDF(
     const colVendorWidth = availableForVendors / suppliers.length;
     const colRate = colVendorWidth * 0.45;
     
-    doc.setFillColor(220, 220, 220);
-    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
-    doc.setFontSize(6);
-    doc.setFont('helvetica', 'bold');
+    // Function to render table headers
+    const renderTableHeaders = () => {
+      doc.setFillColor(220, 220, 220);
+      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight, 'F');
+      doc.setFontSize(6);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(0, 0, 0);
+      
+      let headerX = margin + 1;
+      doc.text('#', headerX, yPos);
+      headerX += colNo;
+      doc.text('Item Description', headerX, yPos);
+      headerX += colItem;
+      doc.text('Qty', headerX, yPos);
+      headerX += colQty;
+      doc.text('Unit', headerX, yPos);
+      headerX += colUnit;
+      
+      // Supplier headers in canonical order
+      suppliers.forEach((supplier, i) => {
+        const vendorX = margin + colNo + colItem + colQty + colUnit + (i * colVendorWidth);
+        doc.text(supplier.substring(0, 14), vendorX + 1, yPos, { maxWidth: colVendorWidth - 2 });
+      });
+      
+      const lowestX = margin + colNo + colItem + colQty + colUnit + (suppliers.length * colVendorWidth);
+      doc.setFillColor(255, 255, 200);
+      doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
+      doc.setTextColor(0, 0, 0);
+      doc.text('Lowest', lowestX + 1, yPos);
+      
+      const avgX = lowestX + colLowest;
+      doc.setFillColor(200, 220, 255);
+      doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
+      doc.text('Avg', avgX + 1, yPos);
+      
+      yPos += rowHeight;
+      
+      // Sub-header row
+      doc.setFillColor(235, 235, 235);
+      doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight - 1, 'F');
+      doc.setFontSize(5);
+      
+      headerX = margin + colNo + colItem + colQty + colUnit;
+      suppliers.forEach(() => {
+        doc.text('Rate', headerX + 1, yPos);
+        doc.text('Amount', headerX + colRate + 1, yPos);
+        headerX += colVendorWidth;
+      });
+      
+      doc.setFillColor(255, 255, 200);
+      doc.rect(lowestX, yPos - 5, colLowest, rowHeight - 1, 'F');
+      doc.text('(Total)', lowestX + 1, yPos);
+      doc.setFillColor(200, 220, 255);
+      doc.rect(avgX, yPos - 5, colAvg, rowHeight - 1, 'F');
+      doc.text('(Total)', avgX + 1, yPos);
+      
+      yPos += rowHeight;
+      
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.3);
+      doc.line(margin, yPos - 4, pageWidth - margin, yPos - 4);
+    };
     
-    let headerX = margin + 1;
-    doc.text('#', headerX, yPos);
-    headerX += colNo;
-    doc.text('Item Description', headerX, yPos);
-    headerX += colItem;
-    doc.text('Qty', headerX, yPos);
-    headerX += colQty;
-    doc.text('Unit', headerX, yPos);
-    headerX += colUnit;
-    
-    // Supplier headers in canonical order
-    suppliers.forEach((supplier, i) => {
-      const vendorX = margin + colNo + colItem + colQty + colUnit + (i * colVendorWidth);
-      doc.text(supplier.substring(0, 14), vendorX + 1, yPos, { maxWidth: colVendorWidth - 2 });
-    });
+    // Render initial headers
+    renderTableHeaders();
     
     const lowestX = margin + colNo + colItem + colQty + colUnit + (suppliers.length * colVendorWidth);
-    doc.setFillColor(255, 255, 200);
-    doc.rect(lowestX, yPos - 5, colLowest, rowHeight, 'F');
-    doc.setTextColor(0, 0, 0);
-    doc.text('Lowest', lowestX + 1, yPos);
-    
     const avgX = lowestX + colLowest;
-    doc.setFillColor(200, 220, 255);
-    doc.rect(avgX, yPos - 5, colAvg, rowHeight, 'F');
-    doc.text('Avg', avgX + 1, yPos);
     
-    yPos += rowHeight;
-    
-    doc.setFillColor(235, 235, 235);
-    doc.rect(margin, yPos - 5, pageWidth - margin * 2, rowHeight - 1, 'F');
-    doc.setFontSize(5);
-    
-    headerX = margin + colNo + colItem + colQty + colUnit;
-    suppliers.forEach(() => {
-      doc.text('Rate', headerX + 1, yPos);
-      doc.text('Amount', headerX + colRate + 1, yPos);
-      headerX += colVendorWidth;
-    });
-    
-    doc.setFillColor(255, 255, 200);
-    doc.rect(lowestX, yPos - 5, colLowest, rowHeight - 1, 'F');
-    doc.text('(Total)', lowestX + 1, yPos);
-    doc.setFillColor(200, 220, 255);
-    doc.rect(avgX, yPos - 5, colAvg, rowHeight - 1, 'F');
-    doc.text('(Total)', avgX + 1, yPos);
-    
-    yPos += rowHeight;
-    
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.3);
-    doc.line(margin, yPos - 4, pageWidth - margin, yPos - 4);
-    
+    // Render ALL items with pagination
     doc.setFont('helvetica', 'normal');
-    itemComparisonMatrix.slice(0, 25).forEach((item, idx) => {
-      checkNewPage(rowHeight + 5);
+    itemComparisonMatrix.forEach((item, idx) => {
+      // Check if we need a new page (with space for headers + at least 1 row)
+      if (yPos + rowHeight > pageHeight - 25) {
+        doc.addPage();
+        yPos = 15;
+        // Re-render headers on new page
+        renderTableHeaders();
+      }
       
       if (idx % 2 === 0) {
         doc.setFillColor(250, 250, 250);
@@ -342,13 +400,6 @@ export async function generateOfferAnalysisPDF(
     doc.setDrawColor(150, 150, 150);
     doc.setLineWidth(0.2);
     doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
-    
-    if (itemComparisonMatrix.length > 25) {
-      yPos += 4;
-      doc.setFontSize(6);
-      doc.setTextColor(100, 100, 100);
-      doc.text(`... and ${itemComparisonMatrix.length - 25} more items (see Excel export for complete list)`, margin, yPos);
-    }
     
     yPos += 12;
   }
