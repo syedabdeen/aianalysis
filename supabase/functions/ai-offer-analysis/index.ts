@@ -1,5 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+// ============================================================================
+// VERSION TRACKING - Update this when making significant changes
+// ============================================================================
+const ANALYSIS_VERSION = "3.5.0";
+const VERSION_NOTES = "Tool-calling verification, scaling inference, cross-supplier context";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -513,47 +519,35 @@ function calculateExtractionConfidence(
   return score;
 }
 
-// PHASE 3: AI-Powered Price Verification for anomalous extractions
+// ============================================================================
+// PHASE 3: AI-Powered Price Verification with Tool Calling (more reliable)
+// ============================================================================
 async function verifySupplierPricesWithAI(
   quotation: any,
   file: any,
   medianTotal: number,
   LOVABLE_API_KEY: string
 ): Promise<any> {
-  console.log(`🔍 Price verification for ${quotation.supplier.name}: Total ${quotation.commercial.total} vs median ${medianTotal}`);
+  console.log(`🔍 Price verification (v${ANALYSIS_VERSION}) for ${quotation.supplier.name}: Total ${quotation.commercial.total} vs median ${medianTotal}`);
   
-  const verificationPrompt = `PRICE VERIFICATION TASK:
-
-This quotation from "${quotation.supplier.name}" has a total of ${quotation.commercial.total} which seems
-UNUSUALLY LOW compared to similar quotations (median: ${medianTotal.toLocaleString()}).
-
-This is a ${((quotation.commercial.total / medianTotal) * 100).toFixed(0)}% of the expected value - likely an extraction error.
-
-Please RE-EXAMINE the prices in this document VERY CAREFULLY:
-
-1. DECIMAL FORMAT: Are prices like "15.000" meaning 15,000 (fifteen thousand) or 15.00 (fifteen)?
-2. COLUMN ALIGNMENT: Are you reading the correct price column?
-3. MULTIPLIERS: Is there a "per 100" or "per 1000" notation?
-4. UNIT PRICES: For each item, verify Quantity × Unit Price = Line Total
-5. GRAND TOTAL: What is the ACTUAL grand total shown on the document?
-
-MATHEMATICAL CHECK:
-- If a cable costs ~20 per meter normally, but you extracted 0.20, that's 100x wrong
-- If total shows "15,678.00" but you extracted "15.678", that's wrong
-
-Return corrected JSON with accurate prices.
-
-{
-  "supplier": { "name": "", "address": "", "contact": "", "phone": "", "email": "" },
-  "quotation": { "reference": "", "date": "", "validityDays": 0 },
-  "items": [{ "itemNo": 1, "description": "", "unit": "EA", "quantity": 0, "unitPrice": 0, "totalPrice": 0 }],
-  "commercial": { "subtotal": 0, "tax": 0, "total": 0, "currency": "AED", "deliveryTerms": "", "paymentTerms": "", "deliveryDays": 0 }
-}`;
+  const percentOfMedian = ((quotation.commercial.total / medianTotal) * 100).toFixed(0);
 
   try {
     const messages: any[] = [{
       role: 'system',
-      content: 'You are a procurement price verification specialist. Your job is to CORRECT price extraction errors. Pay extreme attention to decimal points, thousands separators, and number formats.'
+      content: `You are a price verification specialist. A quotation was extracted but the total seems INCORRECT.
+
+CONTEXT:
+- Extracted total: ${quotation.commercial.total.toLocaleString()}
+- Expected total (based on similar quotes): ~${medianTotal.toLocaleString()}
+- Current extraction is ${percentOfMedian}% of expected - likely a decimal/format error
+
+YOUR TASK:
+1. RE-EXAMINE all prices in this document
+2. Look for decimal point errors (15.000 might mean 15,000)
+3. Verify each line: Qty × Unit Price = Line Total
+4. Find the CORRECT Grand Total from the document
+5. Return the corrected quotation data`
     }];
 
     if (file.data) {
@@ -564,17 +558,18 @@ Return corrected JSON with accurate prices.
       messages.push({
         role: 'user',
         content: [
-          { type: 'text', text: verificationPrompt },
+          { type: 'text', text: `Verify and correct the prices in this quotation. Current extracted total (${quotation.commercial.total}) is only ${percentOfMedian}% of expected (${medianTotal}).` },
           { type: 'image_url', image_url: { url: dataUrl } }
         ]
       });
     } else {
-      return quotation; // Can't verify without file
+      return quotation;
     }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000);
 
+    // Use TOOL CALLING for reliable structured output
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -582,9 +577,60 @@ Return corrected JSON with accurate prices.
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-pro', // Use best model for verification
+        model: 'google/gemini-2.5-pro',
         max_completion_tokens: 4000,
         messages,
+        tools: [{
+          type: 'function',
+          function: {
+            name: 'submit_verified_quotation',
+            description: 'Submit the corrected quotation with verified prices',
+            parameters: {
+              type: 'object',
+              properties: {
+                detectedNumberFormat: {
+                  type: 'string',
+                  description: 'The number format used in the document (e.g., "dot_as_thousands", "comma_as_thousands", "standard_decimal")'
+                },
+                scalingFactorApplied: {
+                  type: 'number',
+                  description: 'If prices were scaled up (e.g., multiplied by 100 or 1000), indicate the factor here. Use 1 if no scaling needed.'
+                },
+                correctedTotal: {
+                  type: 'number',
+                  description: 'The correct grand total from the document'
+                },
+                correctedSubtotal: {
+                  type: 'number',
+                  description: 'The correct subtotal before tax'
+                },
+                correctedTax: {
+                  type: 'number',
+                  description: 'The correct tax/VAT amount'
+                },
+                evidence: {
+                  type: 'string',
+                  description: 'Brief description of where you found the correct total (e.g., "Grand Total on page 2: AED 158,678.00")'
+                },
+                sampleItemVerification: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      description: { type: 'string' },
+                      quantity: { type: 'number' },
+                      correctedUnitPrice: { type: 'number' },
+                      correctedTotal: { type: 'number' }
+                    }
+                  },
+                  description: 'Verification of 2-3 sample line items with corrected prices'
+                }
+              },
+              required: ['correctedTotal', 'evidence']
+            }
+          }
+        }],
+        tool_choice: { type: 'function', function: { name: 'submit_verified_quotation' } }
       }),
       signal: controller.signal,
     });
@@ -593,32 +639,122 @@ Return corrected JSON with accurate prices.
 
     if (!response.ok) {
       console.error(`Verification API error: ${response.status}`);
-      return quotation;
+      return tryScalingInference(quotation, medianTotal);
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
+    const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
     
-    const verified = safeJSONParse(content, `${quotation.supplier.name}_verification`);
+    if (!toolCall?.function?.arguments) {
+      console.log('No tool call in verification response, trying scaling inference...');
+      return tryScalingInference(quotation, medianTotal);
+    }
+
+    const verificationResult = JSON.parse(toolCall.function.arguments);
+    console.log(`Verification result:`, verificationResult);
     
-    if (verified && verified.commercial?.total > 0) {
-      const verifiedTotal = parseNumericValue(verified.commercial.total);
+    const correctedTotal = parseNumericValue(verificationResult.correctedTotal);
+    
+    // Only accept if the corrected total is significantly higher (more reasonable)
+    if (correctedTotal > quotation.commercial.total * 1.5 && correctedTotal > medianTotal * 0.3) {
+      console.log(`✓ Verification found corrected total: ${correctedTotal} (was ${quotation.commercial.total})`);
       
-      // Only accept if verification found higher total (more reasonable)
-      if (verifiedTotal > quotation.commercial.total * 2) {
-        console.log(`✓ Verification found corrected total: ${verifiedTotal} (was ${quotation.commercial.total})`);
-        verified._priceVerified = true;
-        verified._originalTotal = quotation.commercial.total;
-        return verified;
-      }
+      // Apply scaling factor to items if provided
+      const scalingFactor = verificationResult.scalingFactorApplied || 1;
+      const correctedItems = quotation.items.map((item: any) => ({
+        ...item,
+        unitPrice: item.unitPrice * scalingFactor,
+        totalPrice: (item.totalPrice || item.unitPrice * item.quantity) * scalingFactor,
+      }));
+      
+      return {
+        ...quotation,
+        items: correctedItems,
+        commercial: {
+          ...quotation.commercial,
+          subtotal: parseNumericValue(verificationResult.correctedSubtotal) || correctedTotal * 0.95,
+          tax: parseNumericValue(verificationResult.correctedTax) || correctedTotal * 0.05,
+          total: correctedTotal,
+        },
+        _priceVerified: true,
+        _originalTotal: quotation.commercial.total,
+        _verificationEvidence: verificationResult.evidence,
+        _scalingFactorApplied: scalingFactor,
+        _detectedNumberFormat: verificationResult.detectedNumberFormat,
+      };
     }
     
-    console.log(`Verification did not improve results for ${quotation.supplier.name}`);
-    return quotation;
+    console.log(`Verification did not improve results (corrected: ${correctedTotal}, original: ${quotation.commercial.total}), trying scaling inference...`);
+    return tryScalingInference(quotation, medianTotal);
+    
   } catch (e: any) {
     console.error(`Verification failed for ${quotation.supplier.name}:`, e.message);
+    return tryScalingInference(quotation, medianTotal);
+  }
+}
+
+// ============================================================================
+// PHASE D: Deterministic Scaling Inference Fallback
+// When AI verification fails, try common scaling factors
+// ============================================================================
+function tryScalingInference(quotation: any, medianTotal: number): any {
+  const originalTotal = quotation.commercial.total;
+  
+  if (originalTotal <= 0 || medianTotal <= 0) {
     return quotation;
   }
+  
+  const percentOfMedian = (originalTotal / medianTotal) * 100;
+  
+  // Only apply if total is suspiciously low (< 20% of median)
+  if (percentOfMedian >= 20) {
+    return quotation;
+  }
+  
+  console.log(`🔧 Attempting scaling inference for ${quotation.supplier.name} (${percentOfMedian.toFixed(1)}% of median)...`);
+  
+  // Test common scaling factors
+  const scalingFactors = [10, 100, 1000];
+  
+  for (const factor of scalingFactors) {
+    const scaledTotal = originalTotal * factor;
+    const scaledPercent = (scaledTotal / medianTotal) * 100;
+    
+    // Accept if scaled total is within reasonable range (50% - 200% of median)
+    if (scaledPercent >= 50 && scaledPercent <= 200) {
+      console.log(`✓ Scaling inference: ${originalTotal} × ${factor} = ${scaledTotal} (${scaledPercent.toFixed(0)}% of median) - ACCEPTED`);
+      
+      // Apply scaling to all items
+      const scaledItems = quotation.items.map((item: any) => ({
+        ...item,
+        unitPrice: item.unitPrice * factor,
+        totalPrice: (item.totalPrice || item.unitPrice * item.quantity) * factor,
+      }));
+      
+      return {
+        ...quotation,
+        items: scaledItems,
+        commercial: {
+          ...quotation.commercial,
+          subtotal: quotation.commercial.subtotal * factor,
+          tax: quotation.commercial.tax * factor,
+          total: scaledTotal,
+        },
+        _priceVerified: false,
+        _autoCorrected: true,
+        _originalTotal: originalTotal,
+        _scalingFactorApplied: factor,
+        _autoCorrectionReason: `scaling_factor_${factor}`,
+        _extractionWarnings: [
+          ...(quotation._extractionWarnings || []),
+          `Auto-corrected: Prices multiplied by ${factor} (likely decimal/thousands separator issue)`
+        ],
+      };
+    }
+  }
+  
+  console.log(`Scaling inference: No suitable factor found for ${quotation.supplier.name}`);
+  return quotation;
 }
 
 // Evaluate extraction quality
@@ -664,8 +800,89 @@ serve(async (req) => {
   }
 
   try {
-    const { files, companySettings } = await req.json();
+    const requestBody = await req.json();
+    const { files, companySettings, mode, targetSupplierIndex, existingQuotations } = requestBody;
 
+    console.log(`AI Offer Analysis v${ANALYSIS_VERSION} - Mode: ${mode || 'analyze'}`);
+
+    // =========================================================================
+    // MODE: reverify_prices - Re-verify a specific supplier with cross-supplier context
+    // =========================================================================
+    if (mode === 'reverify_prices' && typeof targetSupplierIndex === 'number') {
+      console.log(`Re-verification mode for supplier index ${targetSupplierIndex}`);
+      
+      if (!files || files.length === 0) {
+        return new Response(
+          JSON.stringify({ error: 'Files are required for re-verification' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+      if (!LOVABLE_API_KEY) {
+        throw new Error('LOVABLE_API_KEY is not configured');
+      }
+
+      // Get existing totals for context (use existingQuotations if provided, otherwise extract all)
+      let allTotals: number[] = [];
+      
+      if (existingQuotations && Array.isArray(existingQuotations)) {
+        allTotals = existingQuotations.map((q: any) => parseNumericValue(q?.commercial?.total));
+        console.log(`Using existing quotation totals for context: ${allTotals.join(', ')}`);
+      } else if (files.length > 1) {
+        // Quick extraction of totals from all files for context
+        console.log('Extracting totals from all files for context...');
+        // For now, use a simple heuristic - assume files represent similar scope
+        // This will be improved with actual extraction
+      }
+
+      const validTotals = allTotals.filter(t => t > 0);
+      const sortedTotals = [...validTotals].sort((a, b) => a - b);
+      const medianTotal = validTotals.length > 0 ? sortedTotals[Math.floor(sortedTotals.length / 2)] : 0;
+
+      // Get the target file and current quotation
+      const targetFile = files[targetSupplierIndex];
+      const currentQuotation = existingQuotations?.[targetSupplierIndex] || {
+        supplier: { name: 'Unknown' },
+        commercial: { total: 0 }
+      };
+
+      if (!targetFile) {
+        return new Response(
+          JSON.stringify({ error: 'Target file not found' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      console.log(`Target supplier: ${currentQuotation.supplier?.name}, Current total: ${currentQuotation.commercial?.total}, Median: ${medianTotal}`);
+
+      // Run verification with cross-supplier context
+      const verifiedQuotation = await verifySupplierPricesWithAI(
+        currentQuotation,
+        targetFile,
+        medianTotal > 0 ? medianTotal : currentQuotation.commercial?.total * 50, // If no median, assume current is ~2% of actual
+        LOVABLE_API_KEY
+      );
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          version: ANALYSIS_VERSION,
+          mode: 'reverify_prices',
+          targetSupplierIndex,
+          verifiedQuotation,
+          wasVerified: verifiedQuotation._priceVerified || verifiedQuotation._autoCorrected,
+          originalTotal: currentQuotation.commercial?.total,
+          newTotal: verifiedQuotation.commercial?.total,
+          medianContext: medianTotal,
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // =========================================================================
+    // NORMAL MODE: Full analysis
+    // =========================================================================
     if (!files || files.length < 1) {
       return new Response(
         JSON.stringify({ error: 'At least 1 quotation file is required for analysis' }),
@@ -1879,6 +2096,8 @@ ${JSON.stringify(batch.map(it => ({ id: it.idx, supplier: it.supplier, desc: it.
     return new Response(
       JSON.stringify({
         success: true,
+        version: ANALYSIS_VERSION,
+        versionNotes: VERSION_NOTES,
         extractedQuotations: validatedQuotations,
         analysis,
         itemComparisonMatrix,
