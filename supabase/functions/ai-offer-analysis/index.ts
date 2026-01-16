@@ -5,16 +5,69 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Parse numeric value from various formats (e.g., "AED 15,000" -> 15000)
+// ============================================================================
+// PHASE 3: Locale-aware numeric parsing
+// Handles: 1,234.56 (US), 1.234,56 (EU), 15.000 (thousands), etc.
+// ============================================================================
 function parseNumericValue(value: any): number {
   if (typeof value === 'number' && !isNaN(value)) return value;
   if (!value) return 0;
   
-  // Convert to string and clean
-  const str = String(value)
-    .replace(/[A-Za-z$€£¥₹,\s]/g, '') // Remove currency symbols, letters, commas, spaces
-    .replace(/[^\d.-]/g, '') // Keep only digits, dots, and minus
-    .trim();
+  let str = String(value).trim();
+  
+  // Remove currency symbols and letters
+  str = str.replace(/[A-Za-z$€£¥₹\s]/g, '');
+  
+  // If empty after cleaning, return 0
+  if (!str) return 0;
+  
+  // Detect format pattern
+  // Pattern 1: US format - commas as thousands, dot as decimal (1,234.56)
+  // Pattern 2: EU format - dots as thousands, comma as decimal (1.234,56)
+  // Pattern 3: No separators or single separator
+  
+  const lastComma = str.lastIndexOf(',');
+  const lastDot = str.lastIndexOf('.');
+  
+  // If both exist, the LAST one is the decimal separator
+  if (lastComma > 0 && lastDot > 0) {
+    if (lastComma > lastDot) {
+      // EU format: 1.234,56 -> comma is decimal
+      str = str.replace(/\./g, '').replace(',', '.');
+    } else {
+      // US format: 1,234.56 -> dot is decimal
+      str = str.replace(/,/g, '');
+    }
+  } else if (lastComma > 0 && lastDot < 0) {
+    // Only commas: could be "1,234" (thousands) or "1,5" (decimal)
+    const afterComma = str.substring(lastComma + 1);
+    if (afterComma.length === 3 && !str.includes(',', str.indexOf(',') + 1)) {
+      // Single comma with 3 digits after = thousands (1,234)
+      str = str.replace(',', '');
+    } else if (afterComma.length <= 2) {
+      // Comma with 1-2 digits after = decimal (1,5 or 1,50)
+      str = str.replace(',', '.');
+    } else {
+      // Multiple commas = thousands separators
+      str = str.replace(/,/g, '');
+    }
+  } else if (lastDot > 0 && lastComma < 0) {
+    // Only dots: could be "1.234" (thousands) or "1.5" (decimal) or "1.234.567" (thousands)
+    const dotCount = (str.match(/\./g) || []).length;
+    const afterLastDot = str.substring(lastDot + 1);
+    
+    if (dotCount > 1) {
+      // Multiple dots = thousands separators (1.234.567)
+      str = str.replace(/\./g, '');
+    } else if (afterLastDot.length === 3 && str.length > 4) {
+      // Single dot with exactly 3 digits after AND total length > 4 = likely thousands (15.000 = 15000)
+      str = str.replace('.', '');
+    }
+    // Otherwise keep as decimal (1.5 or 123.45)
+  }
+  
+  // Remove any remaining non-numeric chars except minus and dot
+  str = str.replace(/[^\d.-]/g, '');
   
   const num = parseFloat(str);
   return isNaN(num) ? 0 : num;
@@ -25,27 +78,23 @@ function looksLikeReferenceCode(str: string): boolean {
   if (!str || str.length < 3) return true;
   const normalized = str.trim();
   
-  // Patterns that indicate reference codes
   const refPatterns = [
-    /^[A-Z]{0,3}-?\d{2,}/i,        // QT-855, RFQ-2024, Q-123
-    /^\d{3,}/,                      // Pure numbers like 855123
-    /^REF[-\s]?\d/i,                // REF-001
-    /^Q[-\s]?\d/i,                  // Q-001
-    /^RFQ[-\s]?\d/i,                // RFQ-001
-    /^QUOTE[-\s]?\d/i,              // QUOTE-001
-    /^INV[-\s]?\d/i,                // INV-001
-    /^PO[-\s]?\d/i,                 // PO-001
+    /^[A-Z]{0,3}-?\d{2,}/i,
+    /^\d{3,}/,
+    /^REF[-\s]?\d/i,
+    /^Q[-\s]?\d/i,
+    /^RFQ[-\s]?\d/i,
+    /^QUOTE[-\s]?\d/i,
+    /^INV[-\s]?\d/i,
+    /^PO[-\s]?\d/i,
   ];
   
-  // If matches any reference pattern, it's likely a reference
   if (refPatterns.some(p => p.test(normalized))) {
-    // But if it also has company-like words, might be valid
     const companyWords = ['ltd', 'llc', 'inc', 'corp', 'co.', 'company', 'trading', 'enterprise', 'group', 'services'];
     const hasCompanyWord = companyWords.some(w => normalized.toLowerCase().includes(w));
     if (!hasCompanyWord) return true;
   }
   
-  // Too short to be a company name (less than 3 words and under 10 chars)
   const words = normalized.split(/\s+/);
   if (words.length < 2 && normalized.length < 10 && /\d/.test(normalized)) {
     return true;
@@ -57,17 +106,11 @@ function looksLikeReferenceCode(str: string): boolean {
 // Repair malformed JSON from AI responses
 function repairJSON(jsonStr: string): string {
   return jsonStr
-    // Replace single quotes with double quotes (common AI mistake)
     .replace(/'/g, '"')
-    // Remove trailing commas before ] or }
     .replace(/,\s*([\]}])/g, '$1')
-    // Fix unquoted property names: { key: value } -> { "key": value }
     .replace(/(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
-    // Remove control characters that break JSON
     .replace(/[\x00-\x1F\x7F]/g, ' ')
-    // Fix escaped single quotes in values
     .replace(/\\'/g, "'")
-    // Remove BOM and other invisible chars
     .replace(/^\uFEFF/, '')
     .trim();
 }
@@ -82,14 +125,12 @@ function safeJSONParse(content: string, fileName: string): any | null {
 
   let jsonStr = jsonMatch[0];
   
-  // Try parsing as-is first
   try {
     return JSON.parse(jsonStr);
   } catch (parseError) {
     console.log(`JSON parse failed for ${fileName}, attempting repair...`);
   }
   
-  // Try with repaired JSON
   try {
     const repaired = repairJSON(jsonStr);
     const result = JSON.parse(repaired);
@@ -100,6 +141,262 @@ function safeJSONParse(content: string, fileName: string): any | null {
   }
   
   return null;
+}
+
+// ============================================================================
+// PHASE 2: Item normalization - merge continuations, remove non-items, dedupe
+// ============================================================================
+interface NormalizedItem {
+  itemNo: number;
+  description: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
+interface NormalizationDiagnostics {
+  rawItemCount: number;
+  normalizedItemCount: number;
+  mergedContinuations: number;
+  removedNonItemRows: number;
+  dedupedRows: number;
+}
+
+// Patterns for rows that are NOT actual line items
+const NON_ITEM_PATTERNS = [
+  /^(sub)?total\b/i,
+  /^grand\s*total\b/i,
+  /^amount\s*(payable|due)?\b/i,
+  /^vat\b/i,
+  /^tax\b/i,
+  /^discount\b/i,
+  /^shipping\b/i,
+  /^delivery\b/i,
+  /^freight\b/i,
+  /^terms?\s*(and|&)?\s*conditions?\b/i,
+  /^payment\s*terms?\b/i,
+  /^bank\s*(details|account)\b/i,
+  /^note[s]?\s*:/i,
+  /^remark[s]?\s*:/i,
+  /^validity\b/i,
+  /^quotation\s*(ref|number|no\.?)\b/i,
+  /^\*+\s*$/,
+  /^[-=_]+$/,
+];
+
+function isNonItemRow(description: string): boolean {
+  const trimmed = description.trim();
+  if (trimmed.length < 3) return true;
+  return NON_ITEM_PATTERNS.some(pattern => pattern.test(trimmed));
+}
+
+function isContinuationLine(item: any): boolean {
+  // A continuation line typically has description but no prices/quantities
+  const hasDescription = item.description && item.description.trim().length > 0;
+  const hasQuantity = parseNumericValue(item.quantity) > 0;
+  const hasUnitPrice = parseNumericValue(item.unitPrice) > 0;
+  const hasTotalPrice = parseNumericValue(item.totalPrice) > 0;
+  
+  return hasDescription && !hasQuantity && !hasUnitPrice && !hasTotalPrice;
+}
+
+function normalizeDescription(desc: string): string {
+  return (desc || '')
+    .toLowerCase()
+    .replace(/[^\w\s\d]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function areSimilarItems(desc1: string, desc2: string): boolean {
+  const norm1 = normalizeDescription(desc1);
+  const norm2 = normalizeDescription(desc2);
+  
+  if (norm1 === norm2) return true;
+  
+  // Check if one contains the other (for near-duplicates)
+  if (norm1.includes(norm2) || norm2.includes(norm1)) {
+    const shorter = norm1.length < norm2.length ? norm1 : norm2;
+    const longer = norm1.length >= norm2.length ? norm1 : norm2;
+    // If the shorter is at least 80% of the longer, consider similar
+    if (shorter.length / longer.length > 0.8) return true;
+  }
+  
+  // Jaccard similarity for word overlap
+  const words1 = new Set(norm1.split(' ').filter(w => w.length > 2));
+  const words2 = new Set(norm2.split(' ').filter(w => w.length > 2));
+  
+  if (words1.size === 0 || words2.size === 0) return false;
+  
+  const intersection = [...words1].filter(w => words2.has(w)).length;
+  const union = new Set([...words1, ...words2]).size;
+  
+  return intersection / union > 0.85;
+}
+
+function normalizeQuotationItems(items: any[]): { normalizedItems: NormalizedItem[]; diagnostics: NormalizationDiagnostics } {
+  const diagnostics: NormalizationDiagnostics = {
+    rawItemCount: items.length,
+    normalizedItemCount: 0,
+    mergedContinuations: 0,
+    removedNonItemRows: 0,
+    dedupedRows: 0,
+  };
+  
+  if (!items || items.length === 0) {
+    return { normalizedItems: [], diagnostics };
+  }
+  
+  const processedItems: NormalizedItem[] = [];
+  
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const description = (item.description || '').trim();
+    
+    // Skip non-item rows (SUBTOTAL, TOTAL, etc.)
+    if (isNonItemRow(description)) {
+      diagnostics.removedNonItemRows++;
+      continue;
+    }
+    
+    // Check if this is a continuation line
+    if (isContinuationLine(item) && processedItems.length > 0) {
+      // Append description to previous item
+      const prevItem = processedItems[processedItems.length - 1];
+      prevItem.description = `${prevItem.description} ${description}`.trim();
+      diagnostics.mergedContinuations++;
+      continue;
+    }
+    
+    // Parse numeric values
+    let unitPrice = parseNumericValue(item.unitPrice);
+    let totalPrice = parseNumericValue(item.totalPrice);
+    const quantity = parseNumericValue(item.quantity) || 1;
+    
+    // Derive missing prices
+    if (unitPrice === 0 && totalPrice > 0 && quantity > 0) {
+      unitPrice = totalPrice / quantity;
+    }
+    if (totalPrice === 0 && unitPrice > 0 && quantity > 0) {
+      totalPrice = unitPrice * quantity;
+    }
+    
+    // Check for duplicate within already processed items
+    let isDuplicate = false;
+    for (let j = 0; j < processedItems.length; j++) {
+      if (areSimilarItems(description, processedItems[j].description)) {
+        // If this one has better data (higher prices), replace
+        if (unitPrice > processedItems[j].unitPrice) {
+          processedItems[j] = {
+            itemNo: processedItems[j].itemNo,
+            description: description.length > processedItems[j].description.length ? description : processedItems[j].description,
+            unit: item.unit || processedItems[j].unit || 'EA',
+            quantity,
+            unitPrice,
+            totalPrice,
+          };
+        }
+        isDuplicate = true;
+        diagnostics.dedupedRows++;
+        break;
+      }
+    }
+    
+    if (!isDuplicate) {
+      processedItems.push({
+        itemNo: processedItems.length + 1,
+        description,
+        unit: item.unit || 'EA',
+        quantity,
+        unitPrice,
+        totalPrice,
+      });
+    }
+  }
+  
+  // Re-number items
+  processedItems.forEach((item, idx) => {
+    item.itemNo = idx + 1;
+  });
+  
+  diagnostics.normalizedItemCount = processedItems.length;
+  
+  return { normalizedItems: processedItems, diagnostics };
+}
+
+// ============================================================================
+// PHASE 3: Total reconciliation with mismatch detection
+// ============================================================================
+interface ReconciliationResult {
+  reconciled: {
+    subtotal: number;
+    tax: number;
+    total: number;
+  };
+  mismatchPct: number;
+  warnings: string[];
+  usedItemsSum: boolean;
+}
+
+function reconcileTotals(items: NormalizedItem[], commercial: any): ReconciliationResult {
+  const warnings: string[] = [];
+  
+  // Calculate sum from items
+  const itemsSum = items.reduce((sum, item) => {
+    const lineTotal = item.totalPrice > 0 ? item.totalPrice : (item.unitPrice * item.quantity);
+    return sum + lineTotal;
+  }, 0);
+  
+  const extractedTotal = parseNumericValue(commercial?.total);
+  const extractedSubtotal = parseNumericValue(commercial?.subtotal);
+  const extractedTax = parseNumericValue(commercial?.tax);
+  
+  let finalTotal = extractedTotal;
+  let usedItemsSum = false;
+  let mismatchPct = 0;
+  
+  // If both exist, calculate mismatch
+  if (itemsSum > 0 && extractedTotal > 0) {
+    mismatchPct = Math.abs(itemsSum - extractedTotal) / Math.max(itemsSum, extractedTotal) * 100;
+    
+    if (mismatchPct > 5) {
+      warnings.push(`Total mismatch: Items sum to ${itemsSum.toFixed(2)} but extracted total is ${extractedTotal.toFixed(2)} (${mismatchPct.toFixed(1)}% difference)`);
+      
+      // Choose the more reliable one
+      // If extracted total is suspiciously small (formatting issue), prefer itemsSum
+      if (extractedTotal < itemsSum * 0.1) {
+        finalTotal = itemsSum;
+        usedItemsSum = true;
+        warnings.push(`Using items sum (${itemsSum.toFixed(2)}) as total appears misread`);
+      } else if (itemsSum < extractedTotal * 0.5) {
+        // Items sum is too low - probably missing items, keep extracted
+        warnings.push(`Keeping extracted total - items may be incomplete`);
+      }
+    }
+  } else if (itemsSum > 0 && extractedTotal === 0) {
+    finalTotal = itemsSum;
+    usedItemsSum = true;
+  }
+  
+  // Reconcile subtotal and tax
+  let finalSubtotal = extractedSubtotal;
+  let finalTax = extractedTax;
+  
+  if (finalSubtotal === 0 && finalTotal > 0) {
+    finalSubtotal = finalTotal - finalTax;
+  }
+  
+  return {
+    reconciled: {
+      subtotal: finalSubtotal,
+      tax: finalTax,
+      total: finalTotal,
+    },
+    mismatchPct,
+    warnings,
+    usedItemsSum,
+  };
 }
 
 // Evaluate extraction quality
@@ -116,7 +413,6 @@ function evaluateExtractionQuality(extracted: any): { quality: 'good' | 'suspici
   const supplierName = extracted?.supplier?.name || '';
   const supplierNameIsSuspicious = looksLikeReferenceCode(supplierName);
   
-  // Check for suspicious extraction
   if (itemsCount === 0) {
     reasons.push('No items extracted');
   }
@@ -130,7 +426,6 @@ function evaluateExtractionQuality(extracted: any): { quality: 'good' | 'suspici
     reasons.push(`Supplier name "${supplierName}" looks like a reference code`);
   }
   
-  // Determine quality level
   if (itemsCount === 0 || (pricedItemsCount === 0 && !hasCommercialTotal)) {
     return { quality: 'bad', reasons };
   }
@@ -163,7 +458,7 @@ serve(async (req) => {
 
     console.log(`Analyzing ${files.length} quotation files...`);
 
-    // Enhanced extraction prompt for retry attempts
+    // Enhanced extraction prompt
     const createExtractionPrompt = (isRetry: boolean, previousIssues?: string[], useOCRMode = false) => {
       let prompt = `You are an expert procurement analyst. Extract ALL data from this supplier quotation document.
 
@@ -171,9 +466,9 @@ CRITICAL REQUIREMENTS:
 1. Extract EXACT numeric values from the document - no estimates or defaults
 2. Remove currency symbols and commas from prices (e.g., "AED 15,000" → 15000)
 3. If a value is not found, use empty string "" for text or 0 for numbers
-4. Read the ENTIRE document carefully - prices are often in tables or at the bottom`;
+4. Read the ENTIRE document carefully - prices are often in tables or at the bottom
+5. IMPORTANT: Each TABLE ROW should be ONE item. Do NOT split wrapped descriptions into multiple items.`;
 
-      // OCR-specific instructions for scanned documents
       if (useOCRMode) {
         prompt += `
 
@@ -187,7 +482,8 @@ This document may be SCANNED, handwritten, or have unusual formatting. Apply the
 5. Look for HANDWRITTEN annotations that may contain prices or notes
 6. Prices might be CIRCLED, HIGHLIGHTED, or written in margin notes
 7. If text is unclear, make your best interpretation based on context
-8. Check EVERY page - totals are often on the last page`;
+8. Check EVERY page - totals are often on the last page
+9. A description spanning multiple lines is STILL ONE ITEM - combine them`;
       }
 
       if (isRetry && previousIssues) {
@@ -199,10 +495,18 @@ ${previousIssues.map(i => `- ${i}`).join('\n')}
 CRITICAL: 
 - The SUPPLIER NAME must be the COMPANY NAME from letterhead/header - NOT a quotation reference number
 - Extract ALL line items from ANY tables in the document
-- Unit prices MUST be extracted for each item if available`;
+- Unit prices MUST be extracted for each item if available
+- Do NOT create separate items for description continuation lines`;
       }
 
       prompt += `
+
+ITEM EXTRACTION RULES (VERY IMPORTANT):
+- Count the actual NUMBER OF ROWS in the quotation table
+- Each row with a price = one item
+- If a description wraps to multiple lines, it is STILL ONE ITEM
+- Do NOT include SUBTOTAL, TOTAL, VAT, DELIVERY rows as items
+- The number of extracted items should match the line count in the original table
 
 EXTRACT THESE FIELDS:
 
@@ -218,10 +522,10 @@ QUOTATION DETAILS:
 - Date (format: YYYY-MM-DD)
 - Validity period in days
 
-LINE ITEMS (extract ALL items from the quotation - VERY IMPORTANT):
-For each item find:
+LINE ITEMS (extract EXACTLY the items from the quotation table):
+For each ACTUAL item row find:
 - Item number
-- Description (full product/service description)
+- Description (full product/service description - combine wrapped lines)
 - Unit of measure (EA, PC, SET, etc.)
 - Quantity
 - Unit price (NUMERIC ONLY - extract from Rate/Price column)
@@ -243,12 +547,6 @@ TECHNICAL SPECIFICATIONS:
 - Certifications/Standards (ISO, CE, etc.)
 - Country of origin
 - Any technical specifications mentioned
-
-PRICE EXTRACTION RULES:
-- Look for "Total", "Grand Total", "Amount Payable", "Net Amount"
-- Check the last row of price tables
-- Verify: total should be subtotal + tax
-- If multiple totals exist, use the FINAL amount
 
 Return ONLY this JSON structure:
 {
@@ -289,7 +587,6 @@ Return ONLY this JSON structure:
     };
 
     // Helper function to extract quotation from a single file
-    // retryLevel: 0 = initial, 1 = enhanced model, 2 = OCR mode
     const extractQuotation = async (file: any, index: number, retryLevel = 0, previousIssues?: string[]): Promise<any> => {
       const retryLabels = ['', ' (RETRY with enhanced model)', ' (RETRY with OCR mode)'];
       const attemptLabel = retryLabels[retryLevel] || '';
@@ -304,11 +601,10 @@ Return ONLY this JSON structure:
           role: 'system', 
           content: useOCRMode 
             ? 'You are a procurement OCR specialist. Read EVERY visible character from this scanned document. Extract data even from poor quality scans. Return ONLY valid JSON.'
-            : 'You are a procurement data extraction specialist. Extract data EXACTLY as it appears in the document. Return ONLY valid JSON - no explanations or markdown.' 
+            : 'You are a procurement data extraction specialist. Extract data EXACTLY as it appears in the document. Each table row = one item. Return ONLY valid JSON - no explanations or markdown.' 
         },
       ];
 
-      // Handle different file types
       if (file.type?.includes('image') || file.data?.startsWith('data:image')) {
         messages.push({
           role: 'user',
@@ -323,7 +619,6 @@ Return ONLY this JSON structure:
           content: `${extractionPrompt}\n\nDocument "${file.name}":\n${file.text.substring(0, 80000)}`
         });
       } else if (file.data) {
-        // For PDFs and other binary files, use image_url format for vision AI
         const dataUrl = file.data.startsWith('data:') 
           ? file.data 
           : `data:application/pdf;base64,${file.data}`;
@@ -343,9 +638,7 @@ Return ONLY this JSON structure:
       }
 
       try {
-        // Use stronger model for retry attempts, always use pro for OCR mode
         const model = retryLevel >= 1 ? 'google/gemini-2.5-pro' : 'google/gemini-2.5-flash';
-        // Longer timeout for OCR mode (scanned docs take longer)
         const timeout = retryLevel >= 2 ? 150000 : (retryLevel >= 1 ? 120000 : 90000);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -376,7 +669,6 @@ Return ONLY this JSON structure:
         const extractionData = await extractionResponse.json();
         const content = extractionData.choices?.[0]?.message?.content || '';
         
-        // Use safe JSON parse with repair fallback
         const extracted = safeJSONParse(content, file.name);
         if (extracted) {
           console.log(`✓ Extracted from ${file.name}: Supplier="${extracted.supplier?.name}", Total=${extracted.commercial?.total}, Items=${extracted.items?.length || 0}`);
@@ -410,7 +702,6 @@ Return ONLY this JSON structure:
       if (quality.quality !== 'good') {
         console.log(`⚠️ File ${i + 1} has ${quality.quality} extraction quality: ${quality.reasons.join('; ')}`);
         
-        // Retry 1: Enhanced model with stricter prompt
         console.log(`🔄 Retry 1 for file ${i + 1}: Enhanced model...`);
         let retryResult = await extractQuotation(files[i], i, 1, quality.reasons);
         let retryQuality = evaluateExtractionQuality(retryResult);
@@ -421,7 +712,6 @@ Return ONLY this JSON structure:
           console.log(`✓ Retry 1 improved extraction for file ${i + 1}`);
           extractedQuotations[i] = retryResult;
         } else {
-          // Retry 2: OCR mode for scanned documents
           console.log(`🔄 Retry 2 for file ${i + 1}: OCR mode...`);
           const ocrResult = await extractQuotation(files[i], i, 2, quality.reasons);
           const ocrQuality = evaluateExtractionQuality(ocrResult);
@@ -434,7 +724,6 @@ Return ONLY this JSON structure:
             extractedQuotations[i] = ocrResult;
           } else {
             console.log(`⚠️ All retries failed for file ${i + 1}, keeping best result`);
-            // Keep the best result among all attempts
             const results = [extraction, retryResult, ocrResult];
             const best = results.reduce((a, b) => {
               const aScore = (a.items?.length || 0) + (parseNumericValue(a.commercial?.total) > 0 ? 10 : 0);
@@ -443,7 +732,6 @@ Return ONLY this JSON structure:
             });
             extractedQuotations[i] = best;
             
-            // Mark as having extraction issues if still bad
             if (evaluateExtractionQuality(best).quality === 'bad') {
               extractedQuotations[i]._extractionIssue = 'No items could be extracted from this quotation';
             }
@@ -454,68 +742,31 @@ Return ONLY this JSON structure:
 
     console.log(`Extracted data from ${extractedQuotations.length} quotations`);
 
-    // Validate and normalize all extracted quotations using parseNumericValue
+    // =========================================================================
+    // PHASE 2 & 3: Normalize items and reconcile totals for each quotation
+    // =========================================================================
     const validatedQuotations = extractedQuotations.map((q, index) => {
-      // Parse items with proper numeric handling and derive missing values
-      const items = Array.isArray(q?.items) ? q.items.map((item: any, idx: number) => {
-        let unitPrice = parseNumericValue(item?.unitPrice);
-        let totalPrice = parseNumericValue(item?.totalPrice);
-        const quantity = parseNumericValue(item?.quantity) || 1;
-        
-        // Phase 2: Numeric fallbacks - derive missing prices
-        if (unitPrice === 0 && totalPrice > 0 && quantity > 0) {
-          unitPrice = totalPrice / quantity;
-        }
-        if (totalPrice === 0 && unitPrice > 0 && quantity > 0) {
-          totalPrice = unitPrice * quantity;
-        }
-        
-        return {
-          itemNo: item?.itemNo || idx + 1,
-          description: item?.description || '',
-          materialCode: item?.materialCode || '',
-          unit: item?.unit || 'EA',
-          quantity,
-          unitPrice,
-          totalPrice,
-          discount: parseNumericValue(item?.discount),
-          vat: parseNumericValue(item?.vat)
-        };
-      }) : [];
+      // PHASE 2: Normalize items
+      const rawItems = Array.isArray(q?.items) ? q.items : [];
+      const { normalizedItems, diagnostics } = normalizeQuotationItems(rawItems);
       
-      // Parse commercial values with proper numeric handling
-      let subtotal = parseNumericValue(q?.commercial?.subtotal);
-      let tax = parseNumericValue(q?.commercial?.tax);
-      let total = parseNumericValue(q?.commercial?.total);
+      console.log(`File ${index + 1} normalization: ${diagnostics.rawItemCount} raw → ${diagnostics.normalizedItemCount} normalized (merged: ${diagnostics.mergedContinuations}, removed: ${diagnostics.removedNonItemRows}, deduped: ${diagnostics.dedupedRows})`);
       
-      // Fallback: If total is 0 but items have prices, calculate from items
-      if (total === 0 && items.length > 0) {
-        const itemsTotal = items.reduce((sum: number, item: any) => {
-          const lineTotal = item.totalPrice > 0 ? item.totalPrice : (item.unitPrice * item.quantity);
-          return sum + lineTotal;
-        }, 0);
-        if (itemsTotal > 0) {
-          total = itemsTotal;
-          console.log(`Calculated total from items for ${q?.supplier?.name}: ${total}`);
-        }
+      // PHASE 3: Reconcile totals
+      const reconciliation = reconcileTotals(normalizedItems, q?.commercial);
+      
+      if (reconciliation.warnings.length > 0) {
+        console.log(`File ${index + 1} total reconciliation warnings:`, reconciliation.warnings);
       }
       
-      // Fallback: Calculate subtotal if missing
-      if (subtotal === 0 && total > 0) {
-        subtotal = total - tax;
-      }
-      
-      // Phase 3: Clean supplier name - use quotation reference as fallback displayName
+      // Clean supplier name
       let supplierName = q?.supplier?.name || '';
       let quotationRef = q?.quotation?.reference || '';
       
-      // If supplier name looks like a reference, try to use file name or mark appropriately
       if (looksLikeReferenceCode(supplierName)) {
-        // The name might actually be the quotation reference
         if (!quotationRef) {
           quotationRef = supplierName;
         }
-        // Try to get a better name from file or use generic
         const fileName = files[index]?.name || '';
         const cleanFileName = fileName.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' ').trim();
         if (cleanFileName && !looksLikeReferenceCode(cleanFileName) && cleanFileName.length > 5) {
@@ -523,6 +774,18 @@ Return ONLY this JSON structure:
         } else {
           supplierName = `Supplier ${index + 1} (${quotationRef || 'Unknown'})`;
         }
+      }
+      
+      // Build extraction warnings array
+      const extractionWarnings: string[] = [];
+      if (q?._extractionIssue) {
+        extractionWarnings.push(q._extractionIssue);
+      }
+      if (diagnostics.mergedContinuations > 3) {
+        extractionWarnings.push(`Merged ${diagnostics.mergedContinuations} continuation lines`);
+      }
+      if (reconciliation.mismatchPct > 5) {
+        extractionWarnings.push(`Total mismatch: ${reconciliation.mismatchPct.toFixed(1)}%`);
       }
       
       return {
@@ -538,13 +801,13 @@ Return ONLY this JSON structure:
           date: q?.quotation?.date || new Date().toISOString().split('T')[0],
           validityDays: parseNumericValue(q?.quotation?.validityDays) || 30
         },
-        items,
-        itemsExtracted: items.length,
-        pricedItemsCount: items.filter((i: any) => i.unitPrice > 0).length,
+        items: normalizedItems,
+        itemsExtracted: normalizedItems.length,
+        pricedItemsCount: normalizedItems.filter((i: any) => i.unitPrice > 0).length,
         commercial: {
-          subtotal,
-          tax,
-          total,
+          subtotal: reconciliation.reconciled.subtotal,
+          tax: reconciliation.reconciled.tax,
+          total: reconciliation.reconciled.total,
           currency: q?.commercial?.currency || companySettings?.currency || 'AED',
           deliveryTerms: q?.commercial?.deliveryTerms || '',
           paymentTerms: q?.commercial?.paymentTerms || '',
@@ -561,12 +824,35 @@ Return ONLY this JSON structure:
           deviations: Array.isArray(q?.technical?.deviations) ? q.technical.deviations : [],
           remarks: q?.technical?.remarks || ''
         },
-        _extractionIssue: q?._extractionIssue || null
+        _extractionIssue: q?._extractionIssue || null,
+        _extractionWarnings: extractionWarnings.length > 0 ? extractionWarnings : undefined,
+        _normalizationDiagnostics: diagnostics,
+        _totalReconciliation: {
+          mismatchPct: reconciliation.mismatchPct,
+          usedItemsSum: reconciliation.usedItemsSum,
+        }
       };
     });
 
+    // =========================================================================
+    // Consensus check: flag suppliers with unusually high item counts
+    // =========================================================================
+    const itemCounts = validatedQuotations.map(q => q.itemsExtracted).filter(c => c > 0);
+    if (itemCounts.length > 1) {
+      const sortedCounts = [...itemCounts].sort((a, b) => a - b);
+      const medianCount = sortedCounts[Math.floor(sortedCounts.length / 2)];
+      
+      validatedQuotations.forEach((q, idx) => {
+        if (q.itemsExtracted > medianCount * 1.5 && q.itemsExtracted > 5) {
+          const warning = `Item count (${q.itemsExtracted}) is significantly higher than median (${medianCount}) - possible row splitting`;
+          console.log(`⚠️ File ${idx + 1}: ${warning}`);
+          q._extractionWarnings = q._extractionWarnings || [];
+          q._extractionWarnings.push(warning);
+        }
+      });
+    }
+
     // Generate comprehensive comparison analysis
-    // Sanitize supplier names to prevent JSON parsing issues
     const supplierNames = validatedQuotations.map(q => 
       q.supplier.name
         .replace(/"/g, "'")
@@ -576,8 +862,6 @@ Return ONLY this JSON structure:
         .substring(0, 50)
     );
     const numSuppliers = supplierNames.length;
-    
-    // Create supplier index mapping for cleaner JSON template
     const supplierIndexMap = supplierNames.map((name, idx) => `Supplier${idx + 1}`);
     
     const comparisonPrompt = `You are an expert procurement analyst. Generate a COMPREHENSIVE global-standard comparative analysis for these ${numSuppliers} supplier quotation(s).
@@ -607,17 +891,12 @@ ANALYSIS REQUIREMENTS:
    - Validity Period
    - Tax/VAT implications
 
-3. LINE ITEM COMPARISON (if multiple suppliers):
-   - Compare prices for matching items across suppliers
-   - Identify which supplier is cheapest for each item
-   - Calculate potential savings
-
-4. RANKING:
+3. RANKING:
    - Calculate weighted overall score (Technical 40%, Commercial 60%)
    - Rank all suppliers
    - Identify: Lowest Price, Best Value, Technical Leader
 
-5. RECOMMENDATION:
+4. RECOMMENDATION:
    - Clear recommendation with justification
    - Risk factors for each supplier
    - Negotiation points
@@ -643,9 +922,7 @@ Return this EXACT JSON structure:
     { "criteria": "Validity Period", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "X days" }`).join(', ')} } },
     { "criteria": "Tax/VAT", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "value": "amount" }`).join(', ')} } }
   ],
-  "itemComparison": [
-    { "item": "item description", "suppliers": { ${supplierIndexMap.map(s => `"${s}": { "unitPrice": 0, "quantity": 0, "total": 0 }`).join(', ')} }, "lowestSupplier": "Supplier1" }
-  ],
+  "itemComparison": [],
   "ranking": [
     { 
       "rank": 1,
@@ -704,22 +981,18 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       const analysisContent = analysisData.choices?.[0]?.message?.content || '';
 
       try {
-        // Try to extract and clean JSON from response
         let jsonMatch = analysisContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           let jsonString = jsonMatch[0];
           
-          // Clean common JSON issues
           jsonString = jsonString
-            .replace(/,\s*}/g, '}')  // Remove trailing commas before }
-            .replace(/,\s*]/g, ']')  // Remove trailing commas before ]
-            .replace(/[\x00-\x1F\x7F]/g, ' '); // Remove control characters
+            .replace(/,\s*}/g, '}')
+            .replace(/,\s*]/g, ']')
+            .replace(/[\x00-\x1F\x7F]/g, ' ');
           
           analysis = JSON.parse(jsonString);
           
-          // Map supplier indices back to actual names in the analysis
           if (analysis.supplierMapping) {
-            // Replace SupplierX keys with actual names in technicalComparison
             if (analysis.technicalComparison) {
               analysis.technicalComparison = analysis.technicalComparison.map((item: any) => {
                 const newSuppliers: any = {};
@@ -731,7 +1004,6 @@ Provide accurate scores, identify the best options clearly, and give actionable 
               });
             }
             
-            // Replace in commercialComparison
             if (analysis.commercialComparison) {
               analysis.commercialComparison = analysis.commercialComparison.map((item: any) => {
                 const newSuppliers: any = {};
@@ -743,7 +1015,6 @@ Provide accurate scores, identify the best options clearly, and give actionable 
               });
             }
             
-            // Replace in itemComparison
             if (analysis.itemComparison) {
               analysis.itemComparison = analysis.itemComparison.map((item: any) => {
                 const newSuppliers: any = {};
@@ -759,12 +1030,10 @@ Provide accurate scores, identify the best options clearly, and give actionable 
           console.log('Analysis parsed successfully');
         } else {
           console.error('No JSON found in analysis response');
-          console.error('Response preview:', analysisContent.substring(0, 500));
           analysis = createDefaultAnalysis(validatedQuotations);
         }
       } catch (e) {
         console.error('Failed to parse analysis:', e);
-        console.error('Response preview:', analysisContent.substring(0, 500));
         analysis = createDefaultAnalysis(validatedQuotations);
       }
     }
@@ -772,9 +1041,8 @@ Provide accurate scores, identify the best options clearly, and give actionable 
     console.log('Analysis complete');
 
     // =========================================================================
-    // AI-POWERED UNIVERSAL ITEM MATCHING
-    // Uses semantic AI matching instead of rule-based string similarity
-    // Handles: word order variations, abbreviations, typos, technical equivalences
+    // PHASE 1: FIXED AI-POWERED ITEM MATCHING
+    // No batching for ≤200 items, two-stage merge for larger lists
     // =========================================================================
     
     interface ItemComparisonRow {
@@ -787,8 +1055,7 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       averageTotal: number;
     }
     
-    // Collect all items from all quotations into a flat list
-    const collectAllItems = (quotations: any[]): Array<{
+    interface CollectedItem {
       idx: number;
       supplier: string;
       description: string;
@@ -796,16 +1063,10 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       unitPrice: number;
       quantity: number;
       total: number;
-    }> => {
-      const allItems: Array<{
-        idx: number;
-        supplier: string;
-        description: string;
-        unit: string;
-        unitPrice: number;
-        quantity: number;
-        total: number;
-      }> = [];
+    }
+    
+    const collectAllItems = (quotations: any[]): CollectedItem[] => {
+      const allItems: CollectedItem[] = [];
       
       quotations.forEach(q => {
         (q.items || []).forEach((item: any) => {
@@ -831,99 +1092,236 @@ Provide accurate scores, identify the best options clearly, and give actionable 
       return allItems;
     };
     
-    // AI-powered semantic item grouping
+    // Two-stage AI grouping for large item lists
+    const mergeGroupsAcrossBatches = async (batchGroups: any[][]): Promise<any[]> => {
+      if (batchGroups.length <= 1) {
+        return batchGroups[0] || [];
+      }
+      
+      // Collect canonical descriptions from all batches
+      const allCanonicals = batchGroups.flat().map((g, idx) => ({
+        batchGroupId: idx,
+        description: g.canonicalDescription,
+        itemIds: g.itemIds,
+        unit: g.standardUnit,
+      }));
+      
+      console.log(`Merging ${allCanonicals.length} groups across ${batchGroups.length} batches...`);
+      
+      // Use AI to merge similar canonical descriptions
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${Deno.env.get('LOVABLE_API_KEY')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash',
+          max_completion_tokens: 4000,
+          messages: [{
+            role: 'system',
+            content: `You merge procurement item groups that represent the SAME product.
+Groups with identical or near-identical descriptions should be merged.
+Return merged groups with combined item IDs.`
+          }, {
+            role: 'user',
+            content: `Merge these ${allCanonicals.length} item groups if they are the same product:
+${JSON.stringify(allCanonicals.map(g => ({ id: g.batchGroupId, desc: g.description, unit: g.unit })), null, 2)}
+
+Return merged groups.`
+          }],
+          tools: [{
+            type: 'function',
+            function: {
+              name: 'merge_groups',
+              description: 'Merge similar item groups',
+              parameters: {
+                type: 'object',
+                properties: {
+                  mergedGroups: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        canonicalDescription: { type: 'string' },
+                        standardUnit: { type: 'string' },
+                        sourceGroupIds: { type: 'array', items: { type: 'number' } }
+                      },
+                      required: ['canonicalDescription', 'standardUnit', 'sourceGroupIds']
+                    }
+                  }
+                },
+                required: ['mergedGroups']
+              }
+            }
+          }],
+          tool_choice: { type: 'function', function: { name: 'merge_groups' } }
+        })
+      });
+      
+      if (!response.ok) {
+        console.error('Group merge failed, returning unmerged');
+        return batchGroups.flat();
+      }
+      
+      const data = await response.json();
+      const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+      
+      if (!toolCall?.function?.arguments) {
+        return batchGroups.flat();
+      }
+      
+      const { mergedGroups } = JSON.parse(toolCall.function.arguments);
+      
+      // Reconstruct groups with combined itemIds
+      return mergedGroups.map((mg: any) => {
+        const combinedItemIds: number[] = [];
+        mg.sourceGroupIds.forEach((sgId: number) => {
+          const sourceGroup = allCanonicals.find(g => g.batchGroupId === sgId);
+          if (sourceGroup) {
+            combinedItemIds.push(...sourceGroup.itemIds);
+          }
+        });
+        
+        return {
+          canonicalDescription: mg.canonicalDescription,
+          standardUnit: mg.standardUnit,
+          itemIds: combinedItemIds,
+        };
+      });
+    };
+    
     const buildItemComparisonMatrixWithAI = async (quotations: any[]): Promise<ItemComparisonRow[]> => {
-      const supplierNames = quotations.map(q => q.supplier.name);
+      const supplierNamesList = quotations.map(q => q.supplier.name);
       const allItems = collectAllItems(quotations);
       
       if (allItems.length === 0) return [];
       
-      console.log(`AI Item Matching: Processing ${allItems.length} items from ${supplierNames.length} suppliers...`);
+      console.log(`AI Item Matching: Processing ${allItems.length} items from ${supplierNamesList.length} suppliers...`);
       
-      // For small lists, process directly. For large lists, batch.
-      const BATCH_SIZE = 80;
-      const batches: typeof allItems[] = [];
-      for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
-        batches.push(allItems.slice(i, i + BATCH_SIZE));
-      }
+      // PHASE 1 FIX: For ≤200 items, NO BATCHING
+      const MAX_SINGLE_BATCH = 200;
       
-      let allGroups: Array<{
-        canonicalDescription: string;
-        standardUnit: string;
-        itemIds: number[];
-      }> = [];
+      let allGroups: any[] = [];
       
-      for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-        const batch = batches[batchIdx];
-        console.log(`Processing batch ${batchIdx + 1}/${batches.length} (${batch.length} items)...`);
+      if (allItems.length <= MAX_SINGLE_BATCH) {
+        // Single batch - no risk of duplicate groups
+        console.log(`Processing all ${allItems.length} items in single batch (no batching)...`);
         
-        try {
-          const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
-              max_completion_tokens: 4000,
-              messages: [{
-                role: 'system',
-                content: `You are an expert procurement analyst. Group quotation items that refer to the SAME product/material.
+        const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${Deno.env.get('LOVABLE_API_KEY')}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-2.5-pro', // Use pro for better accuracy on full list
+            max_completion_tokens: 8000,
+            messages: [{
+              role: 'system',
+              content: `You are a procurement item matching expert. Group IDENTICAL products from different suppliers.
 
-UNIVERSAL MATCHING RULES - Apply to ALL procurement categories:
+MATCHING RULES:
+1. SAME ITEM = Same product with minor wording differences
+2. SIZE MATTERS: 70mm ≠ 95mm, DN50 ≠ DN100
+3. MATERIAL MATTERS: Copper ≠ Aluminium, PVC ≠ XLPE
+4. TYPE MATTERS: Single Core ≠ Multi Core
+5. Abbreviations are equivalent: SS = Stainless Steel, GI = Galvanized Iron
+6. Unit normalization: MTR = Meter, EA = Each, PC = Piece
 
-1. IGNORE word order: "Cable XLPE 70mm" = "70mm XLPE Cable" = "XLPE 70mm Cable"
+OUTPUT: The number of groups should be close to the ACTUAL number of unique products being quoted.
+If suppliers are quoting the same BOQ of ~20 items, you should create ~20 groups, NOT 50+.`
+            }, {
+              role: 'user',
+              content: `Group these ${allItems.length} quotation items by SAME PRODUCT. Each supplier is quoting similar items.
 
-2. Handle ABBREVIATIONS across industries:
-   - Electrical: 1C/SC=Single Core, 4C=Four Core, Cu=Copper, Al=Aluminium/Aluminum, XLPE, PVC, SWA=Steel Wire Armoured, HT=High Tension, LT=Low Tension
-   - Mechanical: SS=Stainless Steel, CS=Carbon Steel, GI=Galvanized Iron, CI=Cast Iron, MS=Mild Steel, HDPE=High Density Polyethylene
-   - Construction: OPC=Ordinary Portland Cement, PPC=Portland Pozzolana Cement, TMT=Thermo Mechanically Treated
-   - General: HD=Heavy Duty, HP=High Pressure, LP=Low Pressure, S/S=Stainless Steel
-
-3. SIZE EQUIVALENCES:
-   - sqmm = mm2 = mm² = square millimeter
-   - DN50 = 2" = 2 inch = 50mm (for pipes)
-   - NB = Nominal Bore
-   - AWG to mm2 conversions are equivalent
-   - 1/2" = 0.5" = 12.7mm
-
-4. UNIT NORMALIZATION:
-   - RM/MTR/M/LM/METER = Meters
-   - EA/PCS/NOS/UNIT/NO/PC/EACH = Each
-   - KG/KGS/KILOGRAM = Kilogram
-   - SET/LOT = Set
-   - SQM/M2 = Square Meter
-
-5. TYPO & REGIONAL TOLERANCE: 
-   - Armoured=Armored, Aluminium=Aluminum, Galvanised=Galvanized, Colour=Color
-   - Minor spelling variations should match
-
-6. TECHNICAL EQUIVALENCE:
-   - Items serving same function with minor wording differences = SAME item
-   - "Junction Box" = "J/B" = "JB"
-   - "Circuit Breaker" = "CB" = "C.B."
-
-7. DO NOT MERGE genuinely different items:
-   - Different sizes (70mm vs 95mm)
-   - Different materials (Copper vs Aluminium)  
-   - Different types (Single Core vs Multi Core)
-   - Different specifications (600V vs 1000V)
-
-Output the clearest, most complete description as the canonical name for each group.`
-              }, {
-                role: 'user',
-                content: `Group these ${batch.length} quotation items by same product. Each item has an ID, supplier, description, and unit.
-
-Items to group:
-${JSON.stringify(batch.map(it => ({
+Items:
+${JSON.stringify(allItems.map(it => ({
   id: it.idx,
   supplier: it.supplier,
   desc: it.description,
   unit: it.unit
 })), null, 2)}
 
-Group identical items together. Return the groups.`
+Create groups where each group contains items from DIFFERENT suppliers that are the SAME product.`
+            }],
+            tools: [{
+              type: 'function',
+              function: {
+                name: 'group_items',
+                description: 'Group quotation items that are the same product',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    groups: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          canonicalDescription: { type: 'string' },
+                          standardUnit: { type: 'string' },
+                          itemIds: { type: 'array', items: { type: 'number' } }
+                        },
+                        required: ['canonicalDescription', 'standardUnit', 'itemIds']
+                      }
+                    }
+                  },
+                  required: ['groups']
+                }
+              }
+            }],
+            tool_choice: { type: 'function', function: { name: 'group_items' } }
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`AI grouping failed: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+        
+        if (!toolCall?.function?.arguments) {
+          throw new Error('No tool call in response');
+        }
+        
+        allGroups = JSON.parse(toolCall.function.arguments).groups;
+        console.log(`✓ Single-batch AI created ${allGroups.length} item groups`);
+        
+      } else {
+        // Large list: batch + two-stage merge
+        const BATCH_SIZE = 80;
+        const batches: CollectedItem[][] = [];
+        for (let i = 0; i < allItems.length; i += BATCH_SIZE) {
+          batches.push(allItems.slice(i, i + BATCH_SIZE));
+        }
+        
+        console.log(`Processing ${allItems.length} items in ${batches.length} batches with two-stage merge...`);
+        
+        const batchGroups: any[][] = [];
+        
+        for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+          const batch = batches[batchIdx];
+          console.log(`Processing batch ${batchIdx + 1}/${batches.length} (${batch.length} items)...`);
+          
+          const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${Deno.env.get('LOVABLE_API_KEY')}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash',
+              max_completion_tokens: 4000,
+              messages: [{
+                role: 'system',
+                content: `You are a procurement item matching expert. Group IDENTICAL products.
+SIZE MATTERS: Different sizes = different items.
+MATERIAL MATTERS: Different materials = different items.`
+              }, {
+                role: 'user',
+                content: `Group these ${batch.length} items by same product:
+${JSON.stringify(batch.map(it => ({ id: it.idx, supplier: it.supplier, desc: it.description, unit: it.unit })), null, 2)}`
               }],
               tools: [{
                 type: 'function',
@@ -938,19 +1336,9 @@ Group identical items together. Return the groups.`
                         items: {
                           type: 'object',
                           properties: {
-                            canonicalDescription: { 
-                              type: 'string', 
-                              description: 'Best/clearest description for this item - use the most complete version' 
-                            },
-                            standardUnit: { 
-                              type: 'string', 
-                              description: 'Normalized unit (MTR, EA, KG, SET, SQM, etc)' 
-                            },
-                            itemIds: { 
-                              type: 'array', 
-                              items: { type: 'number' }, 
-                              description: 'Array of item IDs that are the same product' 
-                            }
+                            canonicalDescription: { type: 'string' },
+                            standardUnit: { type: 'string' },
+                            itemIds: { type: 'array', items: { type: 'number' } }
                           },
                           required: ['canonicalDescription', 'standardUnit', 'itemIds']
                         }
@@ -965,28 +1353,22 @@ Group identical items together. Return the groups.`
           });
           
           if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`AI grouping failed for batch ${batchIdx + 1}:`, response.status, errorText);
-            throw new Error(`AI grouping failed: ${response.status}`);
+            throw new Error(`Batch ${batchIdx + 1} failed`);
           }
           
           const data = await response.json();
           const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
           
-          if (!toolCall?.function?.arguments) {
-            console.error('No tool call in AI response for batch', batchIdx + 1);
-            throw new Error('No tool call in response');
+          if (toolCall?.function?.arguments) {
+            const groups = JSON.parse(toolCall.function.arguments).groups;
+            batchGroups.push(groups);
+            console.log(`Batch ${batchIdx + 1}: ${groups.length} groups`);
           }
-          
-          const groups = JSON.parse(toolCall.function.arguments).groups;
-          console.log(`Batch ${batchIdx + 1}: AI created ${groups.length} item groups`);
-          
-          allGroups = allGroups.concat(groups);
-          
-        } catch (batchError) {
-          console.error(`AI batch ${batchIdx + 1} failed:`, batchError);
-          throw batchError; // Will trigger fallback
         }
+        
+        // Two-stage merge
+        allGroups = await mergeGroupsAcrossBatches(batchGroups);
+        console.log(`✓ Two-stage merge complete: ${allGroups.length} final groups`);
       }
       
       console.log(`AI Item Matching: Created ${allGroups.length} total groups from ${allItems.length} items`);
@@ -994,14 +1376,13 @@ Group identical items together. Return the groups.`
       // Build comparison matrix from AI groups
       return allGroups.map(group => {
         const suppliers: Record<string, { unitPrice: number; quantity: number; total: number; unit: string }> = {};
-        supplierNames.forEach(s => suppliers[s] = { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' });
+        supplierNamesList.forEach(s => suppliers[s] = { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' });
         
         let maxQuantity = 0;
         group.itemIds.forEach((id: number) => {
           const item = allItems.find(it => it.idx === id);
           if (!item) return;
           
-          // If this supplier doesn't have a price yet, or this one is better
           if (!suppliers[item.supplier].unitPrice || item.unitPrice > 0) {
             suppliers[item.supplier] = {
               unitPrice: item.unitPrice,
@@ -1013,7 +1394,6 @@ Group identical items together. Return the groups.`
           }
         });
         
-        // Calculate lowest/average from line totals
         const lineTotals = Object.values(suppliers)
           .map(s => s.unitPrice > 0 ? (maxQuantity * s.unitPrice) : 0)
           .filter(t => t > 0);
@@ -1021,7 +1401,6 @@ Group identical items together. Return the groups.`
         const lowestTotal = lineTotals.length > 0 ? Math.min(...lineTotals) : 0;
         const averageTotal = lineTotals.length > 0 ? lineTotals.reduce((a, b) => a + b, 0) / lineTotals.length : 0;
         
-        // Find supplier with lowest
         const lowestSupplier = Object.entries(suppliers)
           .filter(([_, v]) => v.unitPrice > 0)
           .sort((a, b) => (maxQuantity * a[1].unitPrice) - (maxQuantity * b[1].unitPrice))[0]?.[0] || '';
@@ -1038,9 +1417,9 @@ Group identical items together. Return the groups.`
       });
     };
     
-    // Fallback: Rule-based matching (original logic)
+    // Fallback: Rule-based matching
     const buildItemComparisonMatrixRuleBased = (quotations: any[]): ItemComparisonRow[] => {
-      const supplierNames = quotations.map(q => q.supplier.name);
+      const supplierNamesList = quotations.map(q => q.supplier.name);
       
       const normalizeDesc = (desc: string): string => {
         return (desc || '')
@@ -1132,7 +1511,7 @@ Group identical items together. Return the groups.`
               description: rawDesc,
               unit: itemUnit,
               criticalTokens: extractCriticalTokens(rawDesc),
-              suppliers: Object.fromEntries(supplierNames.map(n => [n, { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' }]))
+              suppliers: Object.fromEntries(supplierNamesList.map(n => [n, { unitPrice: 0, quantity: 0, total: 0, unit: 'EA' }]))
             };
             newItem.suppliers[supplierName] = { unitPrice, quantity, total, unit: itemUnit };
             canonicalItems.push(newItem);
@@ -1190,7 +1569,7 @@ Group identical items together. Return the groups.`
         success: true,
         extractedQuotations: validatedQuotations,
         analysis,
-        itemComparisonMatrix, // Reliable item-wise comparison built from extracted data
+        itemComparisonMatrix,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
