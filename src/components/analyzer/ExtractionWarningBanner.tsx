@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, RefreshCw, Edit, AlertCircle, TrendingDown, BarChart3 } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Edit, AlertCircle, TrendingDown, BarChart3, CheckCircle2, Zap } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { Progress } from '@/components/ui/progress';
 
@@ -15,28 +15,36 @@ interface ExtractionIssue {
   severity: 'critical' | 'warning' | 'info';
   priceAnomalyPct?: number;
   extractionConfidence?: number;
+  wasVerified?: boolean;
+  wasAutoCorrected?: boolean;
+  originalTotal?: number;
+  currentTotal?: number;
 }
 
 interface ExtractionWarningBannerProps {
   extractedQuotations: any[];
   uploadedFiles?: { file: { name: string } }[];
   onRetryExtraction: (supplierIndex: number) => void;
+  onVerifyPrices: (supplierIndex: number) => void;
   onManualEntry: (supplierIndex: number) => void;
   isRetrying?: boolean;
   retryingIndex?: number | null;
+  analysisVersion?: string;
 }
 
 export function ExtractionWarningBanner({ 
   extractedQuotations,
   uploadedFiles,
   onRetryExtraction,
+  onVerifyPrices,
   onManualEntry,
   isRetrying = false,
-  retryingIndex = null
+  retryingIndex = null,
+  analysisVersion
 }: ExtractionWarningBannerProps) {
   const { language } = useLanguage();
   
-  // Identify all extraction issues including price anomalies
+  // Identify all extraction issues including price anomalies and corrections
   const allIssues: ExtractionIssue[] = extractedQuotations
     .map((q, idx) => {
       const issues: ExtractionIssue[] = [];
@@ -224,18 +232,45 @@ export function ExtractionWarningBanner({
           </div>
           
           <div className="flex gap-2 flex-shrink-0">
-            <Button 
-              size="sm" 
-              variant={issue.severity === 'critical' ? 'destructive' : 'outline'}
-              onClick={() => onRetryExtraction(issue.index)}
-              disabled={isRetrying}
-              className={issue.severity !== 'critical' ? 'border-orange-300 text-orange-700 hover:bg-orange-100' : ''}
-            >
-              <RefreshCw className={`h-3 w-3 mr-1 ${isRetrying && retryingIndex === issue.index ? 'animate-spin' : ''}`} />
-              {isRetrying && retryingIndex === issue.index 
-                ? (language === 'ar' ? 'جاري...' : 'Verifying...') 
-                : (language === 'ar' ? 'تحقق' : issue.severity === 'critical' ? 'Re-verify' : 'Retry')}
-            </Button>
+            {/* For price anomalies, show "Verify Prices" as primary action */}
+            {issue.issueType === 'price_anomaly' ? (
+              <>
+                <Button 
+                  size="sm" 
+                  variant="destructive"
+                  onClick={() => onVerifyPrices(issue.index)}
+                  disabled={isRetrying}
+                >
+                  <Zap className={`h-3 w-3 mr-1 ${isRetrying && retryingIndex === issue.index ? 'animate-spin' : ''}`} />
+                  {isRetrying && retryingIndex === issue.index 
+                    ? (language === 'ar' ? 'جاري التحقق...' : 'Verifying...') 
+                    : (language === 'ar' ? 'تحقق الأسعار' : 'Verify Prices')}
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => onRetryExtraction(issue.index)}
+                  disabled={isRetrying}
+                  className="border-orange-300 text-orange-700 hover:bg-orange-100"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  {language === 'ar' ? 'إعادة' : 'Retry'}
+                </Button>
+              </>
+            ) : (
+              <Button 
+                size="sm" 
+                variant={issue.severity === 'critical' ? 'destructive' : 'outline'}
+                onClick={() => onRetryExtraction(issue.index)}
+                disabled={isRetrying}
+                className={issue.severity !== 'critical' ? 'border-orange-300 text-orange-700 hover:bg-orange-100' : ''}
+              >
+                <RefreshCw className={`h-3 w-3 mr-1 ${isRetrying && retryingIndex === issue.index ? 'animate-spin' : ''}`} />
+                {isRetrying && retryingIndex === issue.index 
+                  ? (language === 'ar' ? 'جاري...' : 'Retrying...') 
+                  : (language === 'ar' ? 'إعادة المحاولة' : 'Retry')}
+              </Button>
+            )}
             <Button 
               size="sm" 
               variant="secondary"

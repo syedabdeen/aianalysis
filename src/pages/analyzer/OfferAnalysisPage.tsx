@@ -363,7 +363,7 @@ export default function OfferAnalysisPage() {
     document.getElementById('file-upload')?.click();
   };
 
-  // Handle retry extraction for a specific supplier
+  // Handle retry extraction for a specific supplier (full re-extraction)
   const handleRetryExtraction = async (supplierIndex: number) => {
     if (!uploadedFiles[supplierIndex] || isRetrying) return;
     
@@ -433,6 +433,93 @@ export default function OfferAnalysisPage() {
       toast({
         title: language === 'ar' ? 'فشلت إعادة المحاولة' : 'Retry Failed',
         description: error.message || 'Failed to re-extract data',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRetrying(false);
+      setRetryingIndex(null);
+    }
+  };
+
+  // Handle price verification with cross-supplier context
+  const handleVerifyPrices = async (supplierIndex: number) => {
+    if (!uploadedFiles[supplierIndex] || isRetrying) return;
+    
+    setIsRetrying(true);
+    setRetryingIndex(supplierIndex);
+    
+    try {
+      // Prepare ALL files for cross-supplier context
+      const filesData = await Promise.all(uploadedFiles.map(async (uf) => {
+        const base64 = await fileToBase64(uf.file);
+        return { name: uf.file.name, type: uf.file.type, data: base64 };
+      }));
+      
+      const supplierName = extractedQuotations[supplierIndex]?.supplier?.name || 'Unknown';
+      
+      toast({
+        title: language === 'ar' ? 'جاري تحقق الأسعار' : 'Verifying Prices',
+        description: language === 'ar' 
+          ? `تحقق أسعار ${supplierName} مع سياق الموردين الآخرين`
+          : `Verifying ${supplierName} prices with cross-supplier context`,
+      });
+      
+      const { data, error } = await supabase.functions.invoke('ai-offer-analysis', {
+        body: { 
+          mode: 'reverify_prices',
+          targetSupplierIndex: supplierIndex,
+          files: filesData,
+          existingQuotations: extractedQuotations,
+          companySettings: { 
+            name: settings.company_name_en, 
+            region: settings.region, 
+            currency: settings.default_currency || 'AED' 
+          }
+        },
+      });
+      
+      if (error) throw error;
+      
+      console.log('Verification response:', data);
+      
+      if (data?.verifiedQuotation) {
+        const verifiedQuotation = data.verifiedQuotation;
+        const wasVerified = data.wasVerified;
+        const originalTotal = data.originalTotal;
+        const newTotal = data.newTotal;
+        
+        const updated = [...extractedQuotations];
+        updated[supplierIndex] = verifiedQuotation;
+        setExtractedQuotations(updated);
+        
+        // Update uploaded file status
+        setUploadedFiles(prev => prev.map((uf, i) => 
+          i === supplierIndex ? { ...uf, status: 'completed', extractedData: verifiedQuotation } : uf
+        ));
+        
+        if (wasVerified && newTotal !== originalTotal) {
+          toast({
+            title: language === 'ar' ? 'تم تصحيح الأسعار' : 'Prices Corrected',
+            description: language === 'ar' 
+              ? `تم تصحيح الإجمالي من ${originalTotal?.toLocaleString()} إلى ${newTotal?.toLocaleString()}`
+              : `Total corrected from ${originalTotal?.toLocaleString()} to ${newTotal?.toLocaleString()}`,
+          });
+          setIsSaved(false);
+        } else {
+          toast({
+            title: language === 'ar' ? 'لم يتم العثور على تصحيحات' : 'No Corrections Found',
+            description: language === 'ar' 
+              ? 'تحقق يدوياً أو استخدم الإدخال اليدوي'
+              : 'Please verify manually or use manual entry',
+            variant: 'destructive',
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('Price verification error:', error);
+      toast({
+        title: language === 'ar' ? 'فشل التحقق' : 'Verification Failed',
+        description: error.message || 'Failed to verify prices',
         variant: 'destructive',
       });
     } finally {
@@ -536,6 +623,7 @@ export default function OfferAnalysisPage() {
             extractedQuotations={extractedQuotations}
             uploadedFiles={uploadedFiles}
             onRetryExtraction={handleRetryExtraction}
+            onVerifyPrices={handleVerifyPrices}
             onManualEntry={(idx) => {
               setManualEntryIndex(idx);
               setManualEntryOpen(true);
