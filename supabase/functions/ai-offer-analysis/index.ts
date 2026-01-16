@@ -399,6 +399,228 @@ function reconcileTotals(items: NormalizedItem[], commercial: any): Reconciliati
   };
 }
 
+// ============================================================================
+// PHASE 4/5/6: Cross-Supplier Price Anomaly Detection & Confidence Scoring
+// ============================================================================
+
+interface PriceAnomalyResult {
+  hasCriticalAnomaly: boolean;
+  anomalyType: 'none' | 'suspiciously_low' | 'suspiciously_high';
+  percentOfMedian: number;
+  warnings: string[];
+}
+
+function detectCrossSupplierPriceAnomaly(
+  supplierTotal: number,
+  allTotals: number[]
+): PriceAnomalyResult {
+  const validTotals = allTotals.filter(t => t > 0);
+  
+  if (validTotals.length < 2 || supplierTotal <= 0) {
+    return { hasCriticalAnomaly: false, anomalyType: 'none', percentOfMedian: 100, warnings: [] };
+  }
+  
+  const sortedTotals = [...validTotals].sort((a, b) => a - b);
+  const medianTotal = sortedTotals[Math.floor(sortedTotals.length / 2)];
+  const percentOfMedian = (supplierTotal / medianTotal) * 100;
+  
+  const warnings: string[] = [];
+  let anomalyType: 'none' | 'suspiciously_low' | 'suspiciously_high' = 'none';
+  let hasCriticalAnomaly = false;
+  
+  // Critical: total is less than 20% of median (likely decimal/format error)
+  if (supplierTotal < medianTotal * 0.2) {
+    anomalyType = 'suspiciously_low';
+    hasCriticalAnomaly = true;
+    warnings.push(`CRITICAL: Total (${supplierTotal.toLocaleString()}) is only ${percentOfMedian.toFixed(0)}% of median (${medianTotal.toLocaleString()}) - likely extraction error`);
+  }
+  // Warning: total is less than 50% of median
+  else if (supplierTotal < medianTotal * 0.5) {
+    anomalyType = 'suspiciously_low';
+    warnings.push(`WARNING: Total (${supplierTotal.toLocaleString()}) is ${percentOfMedian.toFixed(0)}% of median (${medianTotal.toLocaleString()}) - verify prices`);
+  }
+  // High anomaly: total is more than 3x median
+  else if (supplierTotal > medianTotal * 3) {
+    anomalyType = 'suspiciously_high';
+    warnings.push(`WARNING: Total (${supplierTotal.toLocaleString()}) is ${percentOfMedian.toFixed(0)}% of median - unusually high`);
+  }
+  
+  return { hasCriticalAnomaly, anomalyType, percentOfMedian, warnings };
+}
+
+// PHASE 6: Extraction Confidence Score
+function calculateExtractionConfidence(
+  quotation: any,
+  allTotals: number[],
+  itemCountMedian: number
+): number {
+  let score = 100;
+  const deductions: string[] = [];
+  
+  // Missing critical data
+  if (!quotation.supplier?.name || quotation.supplier.name.includes('Unknown')) {
+    score -= 15;
+    deductions.push('Missing supplier name');
+  }
+  if ((quotation.items?.length || 0) === 0) {
+    score -= 40;
+    deductions.push('No items extracted');
+  }
+  if (quotation.commercial?.total === 0 || !quotation.commercial?.total) {
+    score -= 30;
+    deductions.push('No total found');
+  }
+  
+  // Price anomaly check
+  const validTotals = allTotals.filter(t => t > 0);
+  if (validTotals.length >= 2 && quotation.commercial?.total > 0) {
+    const sortedTotals = [...validTotals].sort((a, b) => a - b);
+    const medianTotal = sortedTotals[Math.floor(sortedTotals.length / 2)];
+    const percentOfMedian = (quotation.commercial.total / medianTotal) * 100;
+    
+    if (percentOfMedian < 20) {
+      score -= 50;
+      deductions.push(`Total is ${percentOfMedian.toFixed(0)}% of median`);
+    } else if (percentOfMedian < 50) {
+      score -= 25;
+      deductions.push(`Total is ${percentOfMedian.toFixed(0)}% of median`);
+    }
+  }
+  
+  // Item count anomaly
+  const itemCount = quotation.items?.length || 0;
+  if (itemCountMedian > 0 && itemCount > itemCountMedian * 1.8) {
+    score -= 15;
+    deductions.push(`Item count (${itemCount}) much higher than median (${itemCountMedian})`);
+  }
+  
+  // Total mismatch
+  if (quotation._totalReconciliation?.mismatchPct > 20) {
+    score -= 20;
+    deductions.push(`Total mismatch: ${quotation._totalReconciliation.mismatchPct.toFixed(0)}%`);
+  } else if (quotation._totalReconciliation?.mismatchPct > 10) {
+    score -= 10;
+    deductions.push(`Total mismatch: ${quotation._totalReconciliation.mismatchPct.toFixed(0)}%`);
+  }
+  
+  // Ensure score is between 0 and 100
+  score = Math.max(0, Math.min(100, score));
+  
+  if (deductions.length > 0) {
+    console.log(`Confidence score ${score} for ${quotation.supplier?.name}: ${deductions.join(', ')}`);
+  }
+  
+  return score;
+}
+
+// PHASE 3: AI-Powered Price Verification for anomalous extractions
+async function verifySupplierPricesWithAI(
+  quotation: any,
+  file: any,
+  medianTotal: number,
+  LOVABLE_API_KEY: string
+): Promise<any> {
+  console.log(`🔍 Price verification for ${quotation.supplier.name}: Total ${quotation.commercial.total} vs median ${medianTotal}`);
+  
+  const verificationPrompt = `PRICE VERIFICATION TASK:
+
+This quotation from "${quotation.supplier.name}" has a total of ${quotation.commercial.total} which seems
+UNUSUALLY LOW compared to similar quotations (median: ${medianTotal.toLocaleString()}).
+
+This is a ${((quotation.commercial.total / medianTotal) * 100).toFixed(0)}% of the expected value - likely an extraction error.
+
+Please RE-EXAMINE the prices in this document VERY CAREFULLY:
+
+1. DECIMAL FORMAT: Are prices like "15.000" meaning 15,000 (fifteen thousand) or 15.00 (fifteen)?
+2. COLUMN ALIGNMENT: Are you reading the correct price column?
+3. MULTIPLIERS: Is there a "per 100" or "per 1000" notation?
+4. UNIT PRICES: For each item, verify Quantity × Unit Price = Line Total
+5. GRAND TOTAL: What is the ACTUAL grand total shown on the document?
+
+MATHEMATICAL CHECK:
+- If a cable costs ~20 per meter normally, but you extracted 0.20, that's 100x wrong
+- If total shows "15,678.00" but you extracted "15.678", that's wrong
+
+Return corrected JSON with accurate prices.
+
+{
+  "supplier": { "name": "", "address": "", "contact": "", "phone": "", "email": "" },
+  "quotation": { "reference": "", "date": "", "validityDays": 0 },
+  "items": [{ "itemNo": 1, "description": "", "unit": "EA", "quantity": 0, "unitPrice": 0, "totalPrice": 0 }],
+  "commercial": { "subtotal": 0, "tax": 0, "total": 0, "currency": "AED", "deliveryTerms": "", "paymentTerms": "", "deliveryDays": 0 }
+}`;
+
+  try {
+    const messages: any[] = [{
+      role: 'system',
+      content: 'You are a procurement price verification specialist. Your job is to CORRECT price extraction errors. Pay extreme attention to decimal points, thousands separators, and number formats.'
+    }];
+
+    if (file.data) {
+      const dataUrl = file.data.startsWith('data:') 
+        ? file.data 
+        : `data:application/pdf;base64,${file.data}`;
+      
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: verificationPrompt },
+          { type: 'image_url', image_url: { url: dataUrl } }
+        ]
+      });
+    } else {
+      return quotation; // Can't verify without file
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-pro', // Use best model for verification
+        max_completion_tokens: 4000,
+        messages,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.error(`Verification API error: ${response.status}`);
+      return quotation;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    
+    const verified = safeJSONParse(content, `${quotation.supplier.name}_verification`);
+    
+    if (verified && verified.commercial?.total > 0) {
+      const verifiedTotal = parseNumericValue(verified.commercial.total);
+      
+      // Only accept if verification found higher total (more reasonable)
+      if (verifiedTotal > quotation.commercial.total * 2) {
+        console.log(`✓ Verification found corrected total: ${verifiedTotal} (was ${quotation.commercial.total})`);
+        verified._priceVerified = true;
+        verified._originalTotal = quotation.commercial.total;
+        return verified;
+      }
+    }
+    
+    console.log(`Verification did not improve results for ${quotation.supplier.name}`);
+    return quotation;
+  } catch (e: any) {
+    console.error(`Verification failed for ${quotation.supplier.name}:`, e.message);
+    return quotation;
+  }
+}
+
 // Evaluate extraction quality
 function evaluateExtractionQuality(extracted: any): { quality: 'good' | 'suspicious' | 'bad'; reasons: string[] } {
   const reasons: string[] = [];
@@ -458,7 +680,7 @@ serve(async (req) => {
 
     console.log(`Analyzing ${files.length} quotation files...`);
 
-    // Enhanced extraction prompt
+    // Enhanced extraction prompt with PRICE FORMAT emphasis
     const createExtractionPrompt = (isRetry: boolean, previousIssues?: string[], useOCRMode = false) => {
       let prompt = `You are an expert procurement analyst. Extract ALL data from this supplier quotation document.
 
@@ -467,7 +689,26 @@ CRITICAL REQUIREMENTS:
 2. Remove currency symbols and commas from prices (e.g., "AED 15,000" → 15000)
 3. If a value is not found, use empty string "" for text or 0 for numbers
 4. Read the ENTIRE document carefully - prices are often in tables or at the bottom
-5. IMPORTANT: Each TABLE ROW should be ONE item. Do NOT split wrapped descriptions into multiple items.`;
+5. IMPORTANT: Each TABLE ROW should be ONE item. Do NOT split wrapped descriptions into multiple items.
+
+⚠️ PRICE FORMAT DETECTION (CRITICAL):
+- Examine the column headers: Look for "RATE", "UNIT PRICE", "PRICE/UNIT", "U/P", "AMOUNT"
+- DETECT NUMBER FORMAT by examining the document:
+  * If you see prices like "15.000" or "2.500" - this likely means 15,000 and 2,500 (dot as thousands separator)
+  * If you see prices like "15,000" or "2,500.00" - this is standard format
+  * Compare with TOTALS to verify: Qty × Unit Price should equal Line Total
+  * If total shows "158,000" but your unit prices give "158", multiply by 1000
+- MATHEMATICAL VALIDATION:
+  * For each item: Quantity × Unit Price = Total Price (approximately)
+  * If your extracted prices don't add up to the document's Grand Total, CHECK YOUR DECIMALS
+  * Example: If item shows Qty=100, Rate=15.750, Total=1,575 → that's correct
+  * But if Qty=100, Rate=15.750, Total=157,500 → Rate is actually 1,575.00
+  
+COMMON EXTRACTION ERRORS TO AVOID:
+1. Reading "23,456.00" as "23.456" (1000x error)
+2. Reading "1,575.00" as "1.575" (1000x error)  
+3. Missing digits when prices are closely spaced
+4. Confusing thousands separator with decimal point`;
 
       if (useOCRMode) {
         prompt += `
@@ -825,29 +1066,100 @@ Return ONLY this JSON structure:
           remarks: q?.technical?.remarks || ''
         },
         _extractionIssue: q?._extractionIssue || null,
-        _extractionWarnings: extractionWarnings.length > 0 ? extractionWarnings : undefined,
+        _extractionWarnings: extractionWarnings.length > 0 ? extractionWarnings : [] as string[],
         _normalizationDiagnostics: diagnostics,
         _totalReconciliation: {
           mismatchPct: reconciliation.mismatchPct,
           usedItemsSum: reconciliation.usedItemsSum,
-        }
+        },
+        // PHASE 4/5/6: Price anomaly and confidence fields (populated later)
+        _priceAnomaly: null as string | null,
+        _priceAnomalyPct: null as number | null,
+        _extractionConfidence: 100,
+        _priceVerified: false,
+        _originalTotal: null as number | null,
       };
     });
 
     // =========================================================================
-    // Consensus check: flag suppliers with unusually high item counts
+    // PHASE 4/5/6: Cross-supplier price anomaly detection + verification
     // =========================================================================
+    const allTotals = validatedQuotations.map(q => q.commercial.total);
+    const validTotals = allTotals.filter(t => t > 0);
+    const sortedValidTotals = [...validTotals].sort((a, b) => a - b);
+    const medianTotal = validTotals.length > 0 ? sortedValidTotals[Math.floor(sortedValidTotals.length / 2)] : 0;
+    
+    // Calculate item count median for confidence scoring
     const itemCounts = validatedQuotations.map(q => q.itemsExtracted).filter(c => c > 0);
-    if (itemCounts.length > 1) {
-      const sortedCounts = [...itemCounts].sort((a, b) => a - b);
-      const medianCount = sortedCounts[Math.floor(sortedCounts.length / 2)];
+    const sortedItemCounts = [...itemCounts].sort((a, b) => a - b);
+    const itemCountMedian = itemCounts.length > 0 ? sortedItemCounts[Math.floor(itemCounts.length / 2)] : 0;
+    
+    // Detect price anomalies for each supplier
+    for (let i = 0; i < validatedQuotations.length; i++) {
+      const q = validatedQuotations[i];
+      const anomaly = detectCrossSupplierPriceAnomaly(q.commercial.total, allTotals);
       
+      if (anomaly.hasCriticalAnomaly || anomaly.anomalyType !== 'none') {
+        q._priceAnomaly = anomaly.anomalyType;
+        q._priceAnomalyPct = anomaly.percentOfMedian;
+        q._extractionWarnings = q._extractionWarnings || [];
+        q._extractionWarnings.push(...anomaly.warnings);
+        
+        // PHASE 3: If critical anomaly detected, try AI verification
+        if (anomaly.hasCriticalAnomaly && files[i]) {
+          console.log(`🔍 Triggering price verification for ${q.supplier.name} (${anomaly.percentOfMedian.toFixed(0)}% of median)...`);
+          
+          const verifiedQuotation = await verifySupplierPricesWithAI(
+            q,
+            files[i],
+            medianTotal,
+            LOVABLE_API_KEY
+          );
+          
+          if (verifiedQuotation._priceVerified) {
+            // Replace with verified data
+            validatedQuotations[i] = {
+              ...validatedQuotations[i],
+              items: verifiedQuotation.items?.map((item: any, idx: number) => ({
+                itemNo: idx + 1,
+                description: (item.description || '').trim(),
+                unit: item.unit || 'EA',
+                quantity: parseNumericValue(item.quantity) || 1,
+                unitPrice: parseNumericValue(item.unitPrice),
+                totalPrice: parseNumericValue(item.totalPrice) || (parseNumericValue(item.unitPrice) * (parseNumericValue(item.quantity) || 1)),
+              })) || validatedQuotations[i].items,
+              commercial: {
+                ...validatedQuotations[i].commercial,
+                subtotal: parseNumericValue(verifiedQuotation.commercial?.subtotal) || 0,
+                tax: parseNumericValue(verifiedQuotation.commercial?.tax) || 0,
+                total: parseNumericValue(verifiedQuotation.commercial?.total) || validatedQuotations[i].commercial.total,
+              },
+              _priceVerified: true,
+              _originalTotal: q.commercial.total,
+              _extractionWarnings: [...(q._extractionWarnings || []), `Price verification: Total corrected from ${q.commercial.total.toLocaleString()} to ${parseNumericValue(verifiedQuotation.commercial?.total).toLocaleString()}`],
+            };
+            
+            // Recalculate item counts
+            validatedQuotations[i].itemsExtracted = validatedQuotations[i].items.length;
+            validatedQuotations[i].pricedItemsCount = validatedQuotations[i].items.filter((item: any) => item.unitPrice > 0).length;
+          }
+        }
+      }
+      
+      // PHASE 6: Calculate extraction confidence score
+      q._extractionConfidence = calculateExtractionConfidence(q, allTotals, itemCountMedian);
+    }
+    
+    // Flag suppliers with unusually high item counts (moved here for unified processing)
+    if (itemCounts.length > 1) {
       validatedQuotations.forEach((q, idx) => {
-        if (q.itemsExtracted > medianCount * 1.5 && q.itemsExtracted > 5) {
-          const warning = `Item count (${q.itemsExtracted}) is significantly higher than median (${medianCount}) - possible row splitting`;
+        if (q.itemsExtracted > itemCountMedian * 1.5 && q.itemsExtracted > 5) {
+          const warning = `Item count (${q.itemsExtracted}) is significantly higher than median (${itemCountMedian}) - possible row splitting`;
           console.log(`⚠️ File ${idx + 1}: ${warning}`);
           q._extractionWarnings = q._extractionWarnings || [];
-          q._extractionWarnings.push(warning);
+          if (!q._extractionWarnings.includes(warning)) {
+            q._extractionWarnings.push(warning);
+          }
         }
       });
     }
