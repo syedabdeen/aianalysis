@@ -3203,6 +3203,7 @@ export type Database = {
           device_id: string | null
           device_info: Json | null
           email: string
+          is_whitelisted: boolean | null
           registered_at: string | null
           user_id: string
           username: string
@@ -3213,6 +3214,7 @@ export type Database = {
           device_id?: string | null
           device_info?: Json | null
           email: string
+          is_whitelisted?: boolean | null
           registered_at?: string | null
           user_id: string
           username: string
@@ -3223,6 +3225,7 @@ export type Database = {
           device_id?: string | null
           device_info?: Json | null
           email?: string
+          is_whitelisted?: boolean | null
           registered_at?: string | null
           user_id?: string
           username?: string

@@ -30,16 +30,29 @@ serve(async (req) => {
           throw new Error("deviceId is required for validation");
         }
 
-        // Fetch current user's device binding
+        // Fetch current user's device binding and whitelist status
         const { data: user, error: fetchError } = await supabase
           .from("users_extended")
-          .select("device_id, device_bound_at")
+          .select("device_id, device_bound_at, is_whitelisted")
           .eq("user_id", userId)
           .single();
 
         if (fetchError) {
           console.error("Error fetching user:", fetchError);
           throw new Error("User not found");
+        }
+
+        // Case 0: User is whitelisted - skip all device checks
+        if (user.is_whitelisted === true) {
+          console.log(`User ${userId} is whitelisted - skipping device validation`);
+          return new Response(
+            JSON.stringify({ 
+              success: true, 
+              whitelisted: true, 
+              message: "User is whitelisted - device validation skipped" 
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
 
         // Case 1: First login - no device bound yet

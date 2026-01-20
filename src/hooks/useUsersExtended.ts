@@ -11,6 +11,7 @@ export interface UserExtended {
   device_bound_at?: string | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   device_info?: any;
+  is_whitelisted?: boolean;
 }
 
 export const useUsersExtended = () => {
@@ -124,6 +125,20 @@ export const useUsersExtended = () => {
     }
   };
 
+  const toggleWhitelist = async (userId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-users', {
+        body: { action: 'toggle-whitelist', userId }
+      });
+
+      if (error) throw error;
+      await fetchUsers();
+      return { success: true, is_whitelisted: data.is_whitelisted };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  };
+
   return {
     users,
     loading,
@@ -134,5 +149,6 @@ export const useUsersExtended = () => {
     extendValidity,
     resetPassword,
     resetDevice,
+    toggleWhitelist,
   };
 };

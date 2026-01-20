@@ -50,13 +50,15 @@ import {
   Eye,
   EyeOff,
   Smartphone,
-  RotateCcw
+  RotateCcw,
+  Shield,
+  ShieldOff
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const AdminDashboardPage = () => {
   const navigate = useNavigate();
-  const { users, loading, fetchUsers, updateUser, deleteUser, extendValidity, resetPassword, resetDevice } = useUsersExtended();
+  const { users, loading, fetchUsers, updateUser, deleteUser, extendValidity, resetPassword, resetDevice, toggleWhitelist } = useUsersExtended();
   
   const [selectedUser, setSelectedUser] = useState<UserExtended | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -64,7 +66,9 @@ const AdminDashboardPage = () => {
   const [extendDialogOpen, setExtendDialogOpen] = useState(false);
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false);
   const [resetDeviceDialogOpen, setResetDeviceDialogOpen] = useState(false);
+  const [whitelistDialogOpen, setWhitelistDialogOpen] = useState(false);
   const [isResettingDevice, setIsResettingDevice] = useState(false);
+  const [isTogglingWhitelist, setIsTogglingWhitelist] = useState(false);
   
   // Edit form state
   const [editEmail, setEditEmail] = useState('');
@@ -149,6 +153,11 @@ const AdminDashboardPage = () => {
     setResetDeviceDialogOpen(true);
   };
 
+  const handleToggleWhitelist = (user: UserExtended) => {
+    setSelectedUser(user);
+    setWhitelistDialogOpen(true);
+  };
+
   const handleConfirmResetDevice = async () => {
     if (!selectedUser) return;
     
@@ -162,6 +171,25 @@ const AdminDashboardPage = () => {
       toast.error(result.error || 'Failed to reset device binding');
     }
     setIsResettingDevice(false);
+  };
+
+  const handleConfirmToggleWhitelist = async () => {
+    if (!selectedUser) return;
+    
+    setIsTogglingWhitelist(true);
+    const result = await toggleWhitelist(selectedUser.user_id);
+
+    if (result.success) {
+      toast.success(
+        result.is_whitelisted 
+          ? 'User whitelisted - can now login from any device'
+          : 'User whitelist removed - device binding active'
+      );
+      setWhitelistDialogOpen(false);
+    } else {
+      toast.error(result.error || 'Failed to update whitelist status');
+    }
+    setIsTogglingWhitelist(false);
   };
 
   const handleConfirmResetPassword = async () => {
@@ -210,6 +238,7 @@ const AdminDashboardPage = () => {
 
   const activeUsers = users.filter(u => !isExpired(u.valid_until)).length;
   const expiredUsers = users.filter(u => isExpired(u.valid_until)).length;
+  const whitelistedUsers = users.filter(u => u.is_whitelisted).length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -229,7 +258,7 @@ const AdminDashboardPage = () => {
 
       <main className="container mx-auto px-4 py-8 space-y-6">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Total Users</CardTitle>
@@ -255,6 +284,15 @@ const AdminDashboardPage = () => {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-destructive">{expiredUsers}</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Whitelisted</CardTitle>
+              <ShieldOff className="h-4 w-4 text-amber-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600">{whitelistedUsers}</div>
             </CardContent>
           </Card>
         </div>
@@ -287,6 +325,7 @@ const AdminDashboardPage = () => {
                     <TableHead>Registered</TableHead>
                     <TableHead>Valid Until</TableHead>
                     <TableHead>Device</TableHead>
+                    <TableHead>Whitelist</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -307,6 +346,19 @@ const AdminDashboardPage = () => {
                         ) : (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground">
                             Not bound
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {user.is_whitelisted ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-amber-500/10 text-amber-600">
+                            <ShieldOff className="mr-1 h-3 w-3" />
+                            Whitelisted
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-muted text-muted-foreground">
+                            <Shield className="mr-1 h-3 w-3" />
+                            Normal
                           </span>
                         )}
                       </TableCell>
@@ -333,7 +385,16 @@ const AdminDashboardPage = () => {
                             <Plus className="mr-1 h-3 w-3" />
                             Extend
                           </Button>
-                          {user.device_id && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleToggleWhitelist(user)}
+                            title={user.is_whitelisted ? "Remove Whitelist" : "Add to Whitelist"}
+                            className={user.is_whitelisted ? "text-amber-600 border-amber-300 hover:bg-amber-50" : ""}
+                          >
+                            {user.is_whitelisted ? <ShieldOff className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
+                          </Button>
+                          {user.device_id && !user.is_whitelisted && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -374,7 +435,7 @@ const AdminDashboardPage = () => {
                   ))}
                   {users.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                         No users found
                       </TableCell>
                     </TableRow>
@@ -617,6 +678,50 @@ const AdminDashboardPage = () => {
               disabled={isResettingDevice}
             >
               {isResettingDevice ? 'Resetting...' : 'Reset Device'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Whitelist Toggle Dialog */}
+      <AlertDialog open={whitelistDialogOpen} onOpenChange={setWhitelistDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              {selectedUser?.is_whitelisted ? (
+                <>
+                  <Shield className="h-5 w-5" />
+                  Remove Whitelist
+                </>
+              ) : (
+                <>
+                  <ShieldOff className="h-5 w-5 text-amber-600" />
+                  Add to Whitelist
+                </>
+              )}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              {selectedUser?.is_whitelisted ? (
+                <>
+                  <p>Remove <strong>{selectedUser?.email}</strong> from whitelist?</p>
+                  <p className="text-sm">They will be bound to one device on their next login.</p>
+                </>
+              ) : (
+                <>
+                  <p>Whitelist <strong>{selectedUser?.email}</strong>?</p>
+                  <p className="text-sm">They will be able to login from any device without restrictions.</p>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmToggleWhitelist}
+              disabled={isTogglingWhitelist}
+              className={selectedUser?.is_whitelisted ? "" : "bg-amber-600 hover:bg-amber-700"}
+            >
+              {isTogglingWhitelist ? 'Processing...' : 'Confirm'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

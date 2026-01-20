@@ -152,6 +152,39 @@ serve(async (req) => {
         });
       }
 
+      case "toggle-whitelist": {
+        if (!userId) {
+          throw new Error("userId is required");
+        }
+        
+        // Get current whitelist status
+        const { data: user, error: fetchError } = await supabase
+          .from("users_extended")
+          .select("is_whitelisted")
+          .eq("user_id", userId)
+          .single();
+        
+        if (fetchError) throw fetchError;
+        
+        // Toggle the status
+        const newStatus = !user.is_whitelisted;
+        
+        const { error } = await supabase
+          .from("users_extended")
+          .update({ is_whitelisted: newStatus })
+          .eq("user_id", userId);
+        
+        if (error) throw error;
+        
+        console.log(`Whitelist toggled for user ${userId}: ${newStatus}`);
+        return new Response(JSON.stringify({ 
+          success: true, 
+          is_whitelisted: newStatus 
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }
