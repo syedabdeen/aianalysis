@@ -4,6 +4,7 @@ import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { useAnalysisReports } from '@/hooks/useAnalysisReports';
+import { useReportDownloads } from '@/hooks/useReportDownloads';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -44,6 +45,7 @@ export default function OfferAnalysisPage() {
   const { language, isRTL } = useLanguage();
   const { settings } = useLocalCompanySettings();
   const { saveReport, isSaving } = useAnalysisReports();
+  const { recordDownload } = useReportDownloads();
   const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -294,9 +296,17 @@ export default function OfferAnalysisPage() {
       }
     );
     
+    // Record download for audit trail
+    recordDownload.mutate({
+      reportType: 'offer_analysis',
+      reportName: pdfReportRef,
+      fileFormat: 'pdf',
+      parameters: { vendorCount: supplierColumns.length },
+    });
+    
     toast({
       title: language === 'ar' ? 'تم التحميل' : 'PDF Downloaded',
-      description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
+      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Saved as'} ${pdfReportRef} • ${language === 'ar' ? 'جاري التحميل' : 'Downloading...'}`,
     });
   };
 
@@ -329,9 +339,17 @@ export default function OfferAnalysisPage() {
       excelReportRef
     );
     
+    // Record download for audit trail
+    recordDownload.mutate({
+      reportType: 'offer_analysis',
+      reportName: excelReportRef,
+      fileFormat: 'csv',
+      parameters: { vendorCount: supplierColumns.length },
+    });
+    
     toast({
       title: language === 'ar' ? 'تم التحميل' : 'Excel Downloaded',
-      description: language === 'ar' ? 'تم تحميل التقرير بنجاح' : 'Report downloaded successfully',
+      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Saved as'} ${excelReportRef} • ${language === 'ar' ? 'جاري التحميل' : 'Downloading...'}`,
     });
   };
 

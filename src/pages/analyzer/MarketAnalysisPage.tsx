@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { useAnalysisReports } from '@/hooks/useAnalysisReports';
+import { useReportDownloads } from '@/hooks/useReportDownloads';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -107,6 +108,7 @@ export default function MarketAnalysisPage() {
   const { language, isRTL } = useLanguage();
   const { settings } = useLocalCompanySettings();
   const { saveReport } = useAnalysisReports();
+  const { recordDownload } = useReportDownloads();
   const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -564,10 +566,21 @@ export default function MarketAnalysisPage() {
 
     // Save PDF
     doc.save(`market-analysis-${reportRef}.pdf`);
+    
+    // Record download for audit trail
+    recordDownload.mutate({
+      reportType: 'market_analysis',
+      reportName: reportRef,
+      fileFormat: 'pdf',
+      parameters: { 
+        manufacturerCount: analysis.manufacturers?.length || 0,
+        supplierCount: analysis.suppliers?.length || 0,
+      },
+    });
 
     toast({
       title: language === 'ar' ? 'تم التنزيل' : 'Downloaded',
-      description: language === 'ar' ? 'تم تنزيل تقرير PDF' : 'PDF report downloaded',
+      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Saved as'} ${reportRef} • ${language === 'ar' ? 'جاري التحميل' : 'Downloading...'}`,
     });
   };
 
@@ -647,10 +660,21 @@ export default function MarketAnalysisPage() {
     link.href = URL.createObjectURL(blob);
     link.download = `market-analysis-${reportRef}.csv`;
     link.click();
+    
+    // Record download for audit trail
+    recordDownload.mutate({
+      reportType: 'market_analysis',
+      reportName: reportRef,
+      fileFormat: 'csv',
+      parameters: { 
+        manufacturerCount: analysis.manufacturers?.length || 0,
+        supplierCount: analysis.suppliers?.length || 0,
+      },
+    });
 
     toast({
       title: language === 'ar' ? 'تم التنزيل' : 'Downloaded',
-      description: language === 'ar' ? 'تم تنزيل ملف Excel' : 'Excel file downloaded',
+      description: `${language === 'ar' ? 'تم حفظ التقرير برقم' : 'Saved as'} ${reportRef} • ${language === 'ar' ? 'جاري التحميل' : 'Downloading...'}`,
     });
   };
 
