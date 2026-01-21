@@ -4,6 +4,7 @@ import { AnalyzerLayout } from '@/components/analyzer/AnalyzerLayout';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { useAnalysisReports, StoredReport } from '@/hooks/useAnalysisReports';
+import { useReportDownloads } from '@/hooks/useReportDownloads';
 import { ReportCard } from '@/components/analyzer/ReportCard';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -48,6 +49,7 @@ export default function ReportsPage() {
     offerReportsCount,
     refetch
   } = useAnalysisReports();
+  const { recordDownload } = useReportDownloads();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -228,6 +230,14 @@ export default function ReportsPage() {
         );
       }
       
+      // Record download for audit trail
+      recordDownload.mutate({
+        reportType: report.type === 'market' ? 'market_analysis' : 'offer_analysis',
+        reportName: report.sequenceNumber,
+        fileFormat: 'pdf',
+        parameters: { source: 'reports_center' },
+      });
+      
       toast({
         title: language === 'ar' ? 'تم التحميل' : 'PDF Downloaded',
         description: `${report.sequenceNumber}.pdf`,
@@ -277,6 +287,14 @@ export default function ReportsPage() {
           report.sequenceNumber
         );
       }
+      
+      // Record download for audit trail
+      recordDownload.mutate({
+        reportType: report.type === 'market' ? 'market_analysis' : 'offer_analysis',
+        reportName: report.sequenceNumber,
+        fileFormat: 'csv',
+        parameters: { source: 'reports_center' },
+      });
       
       toast({
         title: language === 'ar' ? 'تم التنزيل' : 'Downloaded',
