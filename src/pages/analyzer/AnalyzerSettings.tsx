@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useLocalCompanySettings } from '@/hooks/useLocalCompanySettings';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 import { 
   countries, 
   getCitiesForCountry, 
@@ -21,7 +22,9 @@ import {
   Save, 
   Trash2,
   Image as ImageIcon,
-  X
+  X,
+  Lock,
+  Loader2
 } from 'lucide-react';
 
 export default function AnalyzerSettings() {
@@ -34,6 +37,13 @@ export default function AnalyzerSettings() {
   const [hasChanges, setHasChanges] = useState(false);
   const [showCustomCity, setShowCustomCity] = useState(false);
   const [availableCities, setAvailableCities] = useState<string[]>([]);
+  
+  // Password change state
+  const [passwordData, setPasswordData] = useState({
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [changingPassword, setChangingPassword] = useState(false);
 
   // Sync form data when settings load
   useEffect(() => {
@@ -151,6 +161,66 @@ export default function AnalyzerSettings() {
       return `${country.currency} - ${country.currencyName}`;
     }
     return formData.default_currency;
+  };
+
+  // Password change handler
+  const handleChangePassword = async () => {
+    if (!passwordData.newPassword || !passwordData.confirmPassword) {
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' ? 'يرجى ملء جميع الحقول' : 'Please fill in all fields',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (passwordData.newPassword.length < 6) {
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' 
+          ? 'يجب أن تكون كلمة المرور 6 أحرف على الأقل' 
+          : 'Password must be at least 6 characters',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: language === 'ar' 
+          ? 'كلمتا المرور غير متطابقتين' 
+          : 'Passwords do not match',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: passwordData.newPassword,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: language === 'ar' ? 'تم بنجاح' : 'Success',
+        description: language === 'ar' 
+          ? 'تم تغيير كلمة المرور بنجاح' 
+          : 'Password changed successfully',
+      });
+      setPasswordData({ newPassword: '', confirmPassword: '' });
+    } catch (error: any) {
+      console.error('Error changing password:', error);
+      toast({
+        title: language === 'ar' ? 'خطأ' : 'Error',
+        description: error.message || 'Failed to change password',
+        variant: 'destructive',
+      });
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   return (
@@ -401,6 +471,64 @@ export default function AnalyzerSettings() {
                   placeholder="www.company.com"
                 />
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Security - Password Change */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Lock className="w-5 h-5" />
+              {language === 'ar' ? 'الأمان' : 'Security'}
+            </CardTitle>
+            <CardDescription>
+              {language === 'ar' 
+                ? 'تغيير كلمة المرور الخاصة بحسابك' 
+                : 'Change your account password'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>{language === 'ar' ? 'كلمة المرور الجديدة' : 'New Password'}</Label>
+                <Input
+                  type="password"
+                  value={passwordData.newPassword}
+                  onChange={(e) => setPasswordData(prev => ({ 
+                    ...prev, 
+                    newPassword: e.target.value 
+                  }))}
+                  placeholder="••••••••"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {language === 'ar' 
+                    ? 'يجب أن تكون 6 أحرف على الأقل' 
+                    : 'Must be at least 6 characters'}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label>{language === 'ar' ? 'تأكيد كلمة المرور' : 'Confirm Password'}</Label>
+                <Input
+                  type="password"
+                  value={passwordData.confirmPassword}
+                  onChange={(e) => setPasswordData(prev => ({ 
+                    ...prev, 
+                    confirmPassword: e.target.value 
+                  }))}
+                  placeholder="••••••••"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <Button 
+                onClick={handleChangePassword} 
+                disabled={changingPassword || !passwordData.newPassword}
+                variant="secondary"
+              >
+                {changingPassword && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {language === 'ar' ? 'تغيير كلمة المرور' : 'Change Password'}
+              </Button>
             </div>
           </CardContent>
         </Card>
